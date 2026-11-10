@@ -1,0 +1,27 @@
+name: bive-merge-gate
+
+on:
+  pull_request_target:
+    branches: [bived, "milestone/**"]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+jobs:
+  merge-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Require dated authorization and green checks
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/check-merge-gate.mjs

@@ -1,0 +1,57 @@
+// OpenCode 2 configuration of a Bive project. Written by hand and kept tight: edit the private paths and the models.
+// Format: https://opencode.ai/v2/docs/config/ — `permissions` (ordered rules, the last match wins), `policies` (hard
+// rules no agent can loosen). Roles: AGENTS.md and .bive/prompts/. Provider fallback: each role's models are listed in
+// order in .bive/models.json; on an error (unreachable, 429, quota) the coordinator restarts the brief on the next.
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // MCP servers. A server on another machine runs over SSH (stdio through ssh, see .bive/mcp-ssh.sh and the README);
+  // the host is BIVE_MCP_SSH in the environment, never in this file. Example (a Python server on the owner's machine):
+  // "mcp": {
+  //   "app": {"type": "local", "command": ["sh", ".bive/mcp-ssh.sh",
+  //           "~/app/.venv/bin/python", "-m", "app.mcp_server"]}
+  // },
+
+  // The delegate's agent (#84): DELEGATE.md is its system prompt, which replaces the provider's base prompt; a missing
+  // file becomes an empty prompt without an error. Started with `opencode run --agent delegate` (docs/COORDINATING.md).
+  "agents": {
+    "delegate": {
+      "description": "Bive delegate: one issue, one worktree; pushes its branch and reports to the coordinator.",
+      "mode": "primary",
+      "system": "{file:./.bive/prompts/DELEGATE.md}"
+    }
+  },
+
+  "policies": [
+    {"action": "tool.use", "resource": "shell:rm -rf *", "effect": "deny"},
+    {"action": "tool.use", "resource": "shell:git reset --hard *", "effect": "deny"},
+    {"action": "tool.use", "resource": "shell:git rebase *", "effect": "deny"},
+    {"action": "tool.use", "resource": "shell:git push --force*", "effect": "deny"},
+    {"action": "tool.use", "resource": "shell:git push -f *", "effect": "deny"},
+    {"action": "tool.use", "resource": "shell:git push * main", "effect": "deny"},
+    {"action": "tool.use", "resource": "shell:git push * HEAD:main", "effect": "deny"},
+    // Only the supervisor merges or closes a pull request (AGENTS.md › Roles); agents may review and approve.
+    {"action": "tool.use", "resource": "shell:gh pr merge *", "effect": "deny"},
+    {"action": "tool.use", "resource": "shell:gh pr close *", "effect": "deny"}
+  ],
+  "permissions": [
+    {"action": "shell", "resource": "*", "effect": "allow"},
+    {"action": "shell", "resource": "rm -rf *", "effect": "deny"},
+    {"action": "shell", "resource": "git reset --hard *", "effect": "deny"},
+    {"action": "shell", "resource": "git rebase *", "effect": "deny"},
+    {"action": "shell", "resource": "git push --force*", "effect": "deny"},
+    {"action": "shell", "resource": "git push -f *", "effect": "deny"},
+    {"action": "shell", "resource": "git push * main", "effect": "deny"},
+    {"action": "shell", "resource": "git push * HEAD:main", "effect": "deny"},
+    {"action": "shell", "resource": "gh pr merge *", "effect": "deny"},
+    {"action": "shell", "resource": "gh pr close *", "effect": "deny"},
+    {"action": "read", "resource": "*", "effect": "allow"},
+    {"action": "read", "resource": "~/.ssh/*", "effect": "deny"},
+    {"action": "read", "resource": "*/.ssh/*", "effect": "deny"},
+    // Private paths of this project (its users' data, tokens, datasets): one deny line each.
+    // {"action": "read", "resource": "~/.myapp/*", "effect": "deny"},
+    {"action": "webfetch", "resource": "*", "effect": "allow"},
+    {"action": "websearch", "resource": "*", "effect": "allow"},
+    {"action": "external_directory", "resource": "*", "effect": "deny"}
+  ]
+}

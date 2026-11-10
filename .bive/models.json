@@ -1,0 +1,5 @@
+{
+  "coordinator": ["anthropic/claude-opus-5-5", "anthropic/claude-fable-5-1"],
+  "delegate": ["opencode/beam-free", "opencode-go/beam-free", "opencode/nemotron-3.5-lightning-free",
+               "opencode/flint-40b-free", "ollama-cloud/beam", "opencode/big-pickle"]
+}
