@@ -76,6 +76,25 @@ function sameValue(actual: unknown, expected: unknown): boolean {
   }
 }
 
+// Own properties of the returned object, read inside its own realm: a data property flag per key, and whether the
+// prototype is the realm's Object.prototype. No JSON round trip, so "__proto__" and friends stay visible as they are.
+function ownProbe(sandbox: Record<string, unknown>, name: string, args: unknown[]): [boolean, [string, unknown, boolean][]] {
+  sandbox.__args = args
+  const raw = runInContext(
+    `(function (r) { return [Object.getPrototypeOf(r) === Object.prototype, Object.getOwnPropertyNames(r).sort().map((k) => {` +
+      ` const d = Object.getOwnPropertyDescriptor(r, k); return [k, d.value, "value" in d && d.writable === true && d.enumerable === true && d.configurable === true]; }) ]; })(${name}(...__args))`,
+    sandbox,
+    { timeout: STEP_MS },
+  )
+  return JSON.parse(JSON.stringify(raw))
+}
+
+function ownMatches(probe: [boolean, [string, unknown, boolean][]], expected: [string, unknown][]): boolean {
+  const [ordinary, props] = probe
+  const sortedExpected = [...expected].sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))
+  return ordinary && props.every(([, , isData]) => isData) && sameValue(props.map(([key, value]) => [key, value]), sortedExpected)
+}
+
 // The ids of the oracle cases that the module in `source` fails.
 function failingOracles(source: string, oracles: any[]): string[] {
   const sandbox = loadModule(source)
@@ -90,6 +109,18 @@ function failingOracles(source: string, oracles: any[]): string[] {
       continue
     }
     const args = decode(oracle.args)
+    if (oracle.expect.own !== undefined) {
+      let probe: [boolean, [string, unknown, boolean][]] | null = null
+      try {
+        probe = ownProbe(sandbox, oracle.call, args)
+      } catch {
+        // Any throw from the module (its errors come from another realm, so no instanceof check) is a failed oracle,
+        // reported by its id; this case checks the own properties, not the error class.
+        probe = null
+      }
+      if (probe === null || !ownMatches(probe, oracle.expect.own)) failed.push(oracle.id)
+      continue
+    }
     const before = JSON.stringify(args)
     const outcome = invoke(sandbox, oracle.call, args)
     if (oracle.preserves_args && JSON.stringify(args) !== before) failed.push(oracle.id)
@@ -131,14 +162,37 @@ describe("families and inputs", () => {
     }
   })
 
-  test("unknown families and invalid seeds are refused", () => {
-    for (const familyId of ["PLAIN", "", "constructor", "__proto__", 1, undefined, null]) {
-      assert.throws(() => createFixture(familyId as string, "seed-x"), TypeError)
+  test("unknown families are refused with a TypeError naming the family", () => {
+    const cases: [unknown, RegExp][] = [
+      ["PLAIN", /unknown family: PLAIN/],
+      ["", /unknown family: /],
+      ["constructor", /unknown family: constructor/],
+      ["__proto__", /unknown family: __proto__/],
+      [1, /unknown family: number/],
+      [undefined, /unknown family: undefined/],
+      [null, /unknown family: object/],
+    ]
+    for (const [familyId, message] of cases) {
+      assert.throws(() => createFixture(familyId as string, "seed-x"), { name: "TypeError", message: message })
     }
-    for (const seed of ["", "x".repeat(129), "a\nb", "a\u0000b", "tab\there", "bell\u0007", "del\u007f", 1, undefined]) {
-      assert.throws(() => createFixture("plain", seed as string));
+  })
+
+  test("invalid seeds are refused with the expected error class and message", () => {
+    const cases: [unknown, new (...args: any[]) => Error, RegExp][] = [
+      ["", RangeError, /^seed must be 1 to 128 characters$/],
+      ["x".repeat(129), RangeError, /^seed must be 1 to 128 characters$/],
+      [1, TypeError, /^seed must be a string$/],
+      [undefined, TypeError, /^seed must be a string$/],
+      ["a\nb", TypeError, /^seed must not contain control characters$/],
+      ["a\u0000b", TypeError, /^seed must not contain control characters$/],
+      ["tab\there", TypeError, /^seed must not contain control characters$/],
+      ["bell\u0007", TypeError, /^seed must not contain control characters$/],
+      ["del\u007f", TypeError, /^seed must not contain control characters$/],
+    ]
+    for (const [seed, errorClass, message] of cases) {
+      assert.throws(() => createFixture("plain", seed as string), { name: errorClass.name, message: message })
+      assert.throws(() => validateSeed(seed), { name: errorClass.name, message: message })
     }
-    assert.throws(() => validateSeed(""), RangeError)
     assert.doesNotThrow(() => validateSeed("x".repeat(128)))
     assert.doesNotThrow(() => createFixture("plain", "x".repeat(128)))
   })
@@ -174,13 +228,19 @@ describe("determinism and variation", () => {
     }
   })
 
-  test("different seeds give different oracle cases, not just different names", () => {
+  test("different seeds give different semantic data: inputs and expected results, not names or IDs", () => {
+    // Semantic data only: each oracle's kind, arguments and expectation. Oracle ids, call names and export names are
+    // generated identifiers, so renaming alone must not count as variation.
+    const semantics = (fixture: any) =>
+      canonicalJson(fixture.admin.oracle_cases.map((item: any) => ({ kind: item.kind ?? null, args: item.args ?? null, expect: item.expect ?? null })))
     for (const familyId of IMPLEMENTED_FAMILY_IDS) {
-      const distinct = new Set(SEEDS.map((seed) => canonicalJson(createFixture(familyId, seed).admin.oracle_cases)))
-      assert.ok(distinct.size >= 10, `${familyId}: ${distinct.size} distinct oracle sets of ${SEEDS.length}`)
-      const briefs = new Set(SEEDS.map((seed) => createFixture(familyId, seed).candidate.brief))
-      assert.ok(briefs.size >= 10, `${familyId}: ${briefs.size} distinct briefs`)
+      const distinct = new Set(SEEDS.map((seed) => semantics(createFixture(familyId, seed))))
+      assert.ok(distinct.size >= 10, `${familyId}: ${distinct.size} distinct semantic sets of ${SEEDS.length}`)
     }
+    const missingArgs = new Set(SEEDS.map((seed) => canonicalJson(createFixture("missing-target", seed).admin.oracle_cases[2].args)))
+    assert.ok(missingArgs.size >= 10, `missing-target behaviour inputs: ${missingArgs.size} distinct`)
+    const briefs = new Set(SEEDS.map((seed) => createFixture("plain", seed).candidate.brief))
+    assert.ok(briefs.size >= 10, `plain briefs: ${briefs.size} distinct`)
   })
 
   test("the parser's separator and key limit vary with the seed", () => {
@@ -345,6 +405,33 @@ describe("control templates", () => {
 describe("oracles run on the known generated files (node:vm, timeout 1 s)", () => {
   test("the timeout stops a runaway loop in a context", () => {
     assert.throws(() => runInContext("for (;;) {}", createContext({}), { timeout: 50 }))
+  })
+
+  test("larger-change: the reference keeps __proto__, constructor and toString as own data properties", () => {
+    const fixture = createFixture("larger-change", "alpha-1")
+    const reference = fixture.admin.reference_files["src/kv.mjs"]
+    const sep = JSON.parse(/SEPARATOR = (".*?");/.exec(reference)![1])
+    const fn = /export function (\w+)/.exec(reference)![1]
+    const input = [`__proto__${sep}1`, `constructor${sep}2`, `toString${sep}3`, `__proto__${sep}4`].join("\n")
+    const probe = ownProbe(loadModule(reference), fn, [input])
+    assert.equal(probe[0], true, "the result's prototype is Object.prototype (an ordinary object)")
+    // Sorted by key; "__proto__" is last-wins, and every key is a data property (writable, enumerable, configurable).
+    assert.deepEqual(probe[1], [
+      ["__proto__", "4", true],
+      ["constructor", "2", true],
+      ["toString", "3", true],
+    ])
+  })
+
+  test("larger-change: the starting stub has none of those own properties and fails the key oracles", () => {
+    const fixture = createFixture("larger-change", "alpha-1")
+    const stub = fixture.candidate.files["src/kv.mjs"]
+    const fn = /export function (\w+)/.exec(stub)![1]
+    const probe = ownProbe(loadModule(stub), fn, ["__proto__=1"])
+    assert.deepEqual(probe[1], [])
+    const keyOracles = fixture.admin.oracle_cases.filter((item: any) => item.expect?.own !== undefined).map((item: any) => item.id)
+    assert.equal(keyOracles.length, 3)
+    assert.deepEqual(failingOracles(stub, fixture.admin.oracle_cases.filter((item: any) => keyOracles.includes(item.id))), keyOracles)
   })
 
   for (const familyId of IMPLEMENTED_FAMILY_IDS) {

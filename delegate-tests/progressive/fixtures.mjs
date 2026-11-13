@@ -157,6 +157,8 @@ function missingMaterial(familyId, seed) {
   const d = makeDraw(familyId, seed);
   const existing = d.id("end");
   const missing = d.id("window");
+  const start = d.int("start", -20, 50);
+  const length = d.int("length", 1, 30);
   const srcPath = "src/window.mjs";
   const testPath = "test/window.test.mjs";
   return {
@@ -184,7 +186,7 @@ function missingMaterial(familyId, seed) {
     oracle_cases: [
       { id: "target-absent", kind: "export-absent", name: missing },
       { id: "existing-still-exported", kind: "export-present", name: existing },
-      oracle("existing-behaviour", existing, [2, 3], { returns: 5 }),
+      oracle("existing-behaviour", existing, [start, length], { returns: start + length }),
     ],
     preservation: { names: { absent: missing, existing } },
   };
@@ -194,7 +196,8 @@ function largerMaterial(familyId, seed) {
   const d = makeDraw(familyId, seed);
   const fn = d.id("parse");
   const sep = d.pick("separator", ["=", ":", "~"]);
-  const limit = d.int("limit", 8, 24);
+  // At least 11, so that the longest fixed key of the brief ("constructor") is always within the limit.
+  const limit = d.int("limit", 11, 24);
   const word = (label) => d.letters(label, d.int(`${label}#length`, 3, 6));
   const k1 = `k1${word("key1")}`;
   const k2 = `k2${word("key2")}`;
@@ -224,7 +227,8 @@ function largerMaterial(familyId, seed) {
     '    const value = line.slice(at + 1).replace(/^[ \\t]+/, "");',
     '    if (key === "") throw new SyntaxError(`line ${index + 1}: empty key`);',
     '    if (key.length > LIMIT) throw new SyntaxError(`line ${index + 1}: key longer than ${LIMIT}`);',
-    "    result[key] = value;",
+    // defineProperty, not assignment: "__proto__" becomes an own data property, not the prototype.
+    "    Object.defineProperty(result, key, { value, enumerable: true, writable: true, configurable: true });",
     "  }",
     "  return result;",
     "}",
@@ -237,7 +241,8 @@ function largerMaterial(familyId, seed) {
       `- A line is split at its first \`${sep}\`: the key is the text before it, the value the text after it. Spaces and tabs`,
       "  around the key and around the value are removed; spaces inside the value are kept. An empty value is allowed.",
       `- A line with no \`${sep}\`, or with an empty key, throws a SyntaxError. A key longer than ${limit} characters throws a SyntaxError.`,
-      "- A key that appears more than once keeps its last value.",
+      "- A key that appears more than once keeps its last value. Every key is kept as an own property of an ordinary object,",
+      "  including keys such as __proto__, constructor and toString.",
       "- An argument that is not a string throws a TypeError.",
       `Allowed files: ${srcPath} and ${testPath}. Change nothing else.`,
       `Done when: \`${fn}\` follows the rules above and \`node --test ${testPath}\` passes.`,
@@ -272,6 +277,14 @@ function largerMaterial(familyId, seed) {
       oracle("key-at-limit", fn, [`${keyAtLimit}${sep}${v1}`], { returns: { [keyAtLimit]: v1 } }),
       oracle("key-over-limit", fn, [`${keyAtLimit}x${sep}${v1}`], { throws: "SyntaxError" }),
       oracle("not-a-string", fn, [42], { throws: "TypeError" }),
+      // Key edges: own data properties on an ordinary object, checked by the test without JSON normalisation.
+      oracle("proto-key-own", fn, [`__proto__${sep}${v1}`], { own: [["__proto__", v1]] }),
+      oracle("constructor-and-tostring-own", fn, [`constructor${sep}${v1}\ntoString${sep}${v2}`], {
+        own: [["constructor", v1], ["toString", v2]],
+      }),
+      oracle("proto-duplicate-last-wins", fn, [`__proto__${sep}${v1}\n__proto__${sep}${v3}`], {
+        own: [["__proto__", v3]],
+      }),
     ],
     preservation: { names: { export: fn } },
   };
