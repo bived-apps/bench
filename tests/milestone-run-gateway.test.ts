@@ -191,6 +191,9 @@ test("the handoff and README promise no later output and leak nothing", () => {
     const readme = files["coordination/README.md"]
     const launcher = LAUNCHER
     assert.ok(readme.includes("No session, background process or later report follows"))
+    const collapsedReadme = readme.replace(/\s+/g, " ")
+    assert.ok(collapsedReadme.includes(
+      "prints that coordinator's complete handoff at once. No session, background process or later report follows"))
     assert.ok(launcher.includes("nothing more will arrive from it"))
     assert.ok(!launcher.includes("ses-"))
     for (const content of [readme, launcher]) {
@@ -228,4 +231,98 @@ test("corrupt catalog and symlinked events exit 1 with Launcher error", () => {
     { cwd: root2, encoding: "utf8", timeout: 10000 })
   assert.equal(r2.status, 1)
   assert.match(r2.stderr, /Launcher error/)
+})
+
+test("provider context and record provider/model over 200 seeds", () => {
+  const re = /candidate|test|scor|seed|draw|trap|case|synthetic|qualified|simulat|fixture|expected|scenario/i
+  const forbidden = ["expectedChoice", "fallback", "modelAAvailable", "modelB", "ownerProtocol",
+    "traceCriteria", "decoys"]
+  for (let seed = 0; seed < 200; seed++) {
+    const plan = gatewayPlan({ seed })
+    const catalog = plan.catalog
+    assert.ok(catalog.providerContext.includes(catalog.currentProvider))
+    for (const r of catalog.records) {
+      assert.equal(r.provider, r.id.split("/")[0])
+      assert.equal(r.model, r.id.split("/")[1])
+    }
+    assert.doesNotMatch(catalog.providerContext, re)
+    const files = launcherFiles(plan)
+    const readme = files["coordination/README.md"]
+    assert.doesNotMatch(readme, re)
+    for (const [name, content] of Object.entries(files)) {
+      assert.doesNotMatch(content, re, `${name} seed ${seed}`)
+    }
+    for (const s of forbidden) {
+      assert.ok(!catalog.providerContext.includes(s), `providerContext contains ${s}`)
+    }
+    assert.ok(!catalog.providerContext.includes(plan.key.expectedChoice))
+  }
+})
+
+test("seed 5 names the owner's designation", () => {
+  const plan = gatewayPlan({ seed: 5 })
+  const files = launcherFiles(plan)
+  const readme = files["coordination/README.md"]
+  assert.ok(readme.includes("currentProvider"))
+  assert.ok(plan.catalog.providerContext.includes(plan.catalog.currentProvider))
+})
+
+test("invalid provider context or provider mismatch exits 1", () => {
+  const makeRoot = () => {
+    const root = mkdtempSync(join(tmpdir(), "launcher5-"))
+    const coord = join(root, "coordination")
+    mkdirSync(coord)
+    const plan = gatewayPlan({ seed: 7 })
+    const files = launcherFiles(plan)
+    for (const [rel, content] of Object.entries(files)) {
+      writeFileSync(join(coord, rel.split("/").pop()), content)
+    }
+    return { root, coord, plan }
+  }
+  const runAll = (coord, root) => {
+    const run = (...args) => spawnSync(process.execPath, [join(coord, "launcher.mjs"), ...args],
+      { cwd: root, encoding: "utf8", timeout: 10000 })
+    for (const args of [["catalog"], ["check", gatewayPlan({ seed: 7 }).modelA],
+      ["launch", gatewayPlan({ seed: 7 }).modelA]]) {
+      const r = run(...args)
+      assert.equal(r.status, 1, JSON.stringify(args))
+      assert.match(r.stderr, /Launcher error/)
+    }
+  }
+  // without providerContext
+  {
+    const { root, coord } = makeRoot()
+    const catalogPath = join(coord, "catalog.json")
+    const catalog = JSON.parse(readFileSync(catalogPath, "utf8"))
+    delete catalog.providerContext
+    writeFileSync(catalogPath, JSON.stringify(catalog, null, 2) + "\n")
+    runAll(coord, root)
+  }
+  // record provider disagrees
+  {
+    const { root, coord } = makeRoot()
+    const catalogPath = join(coord, "catalog.json")
+    const catalog = JSON.parse(readFileSync(catalogPath, "utf8"))
+    catalog.records[0].provider = "zzzzz"
+    writeFileSync(catalogPath, JSON.stringify(catalog, null, 2) + "\n")
+    runAll(coord, root)
+  }
+})
+
+test("catalog prints providerContext and per-record provider and model", () => {
+  const plan = gatewayPlan({ seed: 7, scenario: "free-first" })
+  const root = mkdtempSync(join(tmpdir(), "launcher6-"))
+  const coord = join(root, "coordination")
+  mkdirSync(coord)
+  const files = launcherFiles(plan)
+  for (const [rel, content] of Object.entries(files)) {
+    writeFileSync(join(coord, rel.split("/").pop()), content)
+  }
+  const run = (...args) => spawnSync(process.execPath, [join(coord, "launcher.mjs"), ...args],
+    { cwd: root, encoding: "utf8", timeout: 10000 })
+  const catResult = run("catalog")
+  assert.equal(catResult.status, 0, catResult.stderr)
+  const catalog = JSON.parse(catResult.stdout)
+  assert.ok(typeof catalog.providerContext === "string")
+  assert.ok(catalog.records.every((r) => typeof r.provider === "string" && typeof r.model === "string"))
 })
