@@ -19,6 +19,23 @@ test("every case is on its own files, whatever the seed", () => {
   for (let seed = 0; seed < 200; seed++) assert.deepEqual(checkIndependent(plan({ seed, date: "2026-11-10" })), [])
 })
 
+test("the opening names the provider context and leaks nothing", () => {
+  const banned = /candidate|test|scor|seed|draw|trap|case|synthetic|qualified|simulat|fixture|expected|scenario/i
+  for (let seed = 0; seed < 200; seed++) {
+    const p = plan({ seed, date: "2026-11-10" })
+    assert.ok(p.opening.includes(
+      `For this repository I name ${p.gateway.catalog.currentProvider} as the current provider for coordinators`))
+    assert.doesNotMatch(p.opening, banned)
+    for (const bad of ["fallback", "modelAAvailable", "decoys", "ownerProtocol", "traceCriteria"]) {
+      assert.ok(!p.opening.includes(bad), `${seed}: ${bad}`)
+    }
+    assert.ok(!p.opening.includes(p.modelB), `${seed}: modelB`)
+    if (p.gateway.key.expectedChoice !== p.modelA) {
+      assert.ok(!p.opening.includes(p.gateway.key.expectedChoice), `${seed}: expectedChoice`)
+    }
+  }
+})
+
 test("the check finds two units on one file", () => {
   const p = plan({ seed: 1, date: "2026-11-10" })
   p.open[1].files = { ...p.open[1].files, ...p.open[0].files }
@@ -109,6 +126,8 @@ test("ordinary hand-overs are signed with model A; model B signs the wrong-model
     assert.equal(p.coordinator, `coordinator ${p.modelA}`)
     assert.equal(p.handoff.signer, `coordinator ${p.modelB}`)
     assert.ok(p.opening.includes(`Coordinators run on ${p.modelA}.`))
+    assert.ok(p.opening.includes(
+      `For this repository I name ${p.gateway.catalog.currentProvider} as the current provider for coordinators`))
     const { handoff, modelB, gateway, ...rest } = p
     assert.equal(modelB, p.modelB)
     assert.ok(!JSON.stringify(rest).includes(p.modelB), "model B outside the wrong-model unit")
