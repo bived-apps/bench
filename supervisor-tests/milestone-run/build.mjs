@@ -12,9 +12,9 @@
 // the exact --repo only; it never edits the AGENTS.md of the repository this script lives in.
 
 import { execFileSync } from "node:child_process"
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs"
 import { gatewayPlan, launcherFiles } from "./gateway.mjs"
-import { dirname, join, relative, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
 
 const MILESTONE = "milestone/m"
@@ -320,7 +320,53 @@ jobs:
         run: node scripts/run-tests.mjs
 `
 
+export function within(root, path) {
+  const rel = relative(root, path)
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel))
+}
+
+// Component-unsafe: a path component that contains ".." but is not exactly ".."
+// (e.g. "..answer-key.json", "foo.."), or an empty/dot component.
+function unsafeComponents(rel) {
+  if (isAbsolute(rel)) return true
+  for (const part of rel.split(sep)) {
+    if (part === "" || part === ".") return true
+    if (part.includes("..") && part !== "..") return true
+  }
+  return false
+}
+
+export function assertKeyOutside(dir, keyOut) {
+  const dirLex = resolve(dir)
+  const dirReal = realpathSync(dirLex)
+  if (!statSync(dirReal).isDirectory()) throw new Error("--dir must be an existing directory")
+  const key = resolve(keyOut)
+  let realKey = key
+  try {
+    realKey = join(realpathSync(dirname(key)), basename(key))
+  } catch (error) {
+    if (error && error.code !== "ENOENT") throw error
+    // Parent missing: resolve only, no crash.
+    realKey = key
+  }
+  // Unresolved (lexical) view catches aliases/inside by name; resolved view catches symlinks.
+  if (within(dirLex, key) || within(dirReal, realKey)) {
+    throw new Error("--key-out must lie outside the clone")
+  }
+  const relUnresolved = relative(dirLex, keyOut)
+  if (unsafeComponents(relUnresolved)) {
+    throw new Error("--key-out must lie outside the clone")
+  }
+  if (isAbsolute(relative(dirLex, key)) || isAbsolute(relative(dirReal, realKey))) {
+    throw new Error("--key-out must lie outside the clone")
+  }
+  return { dirReal, key, realKey }
+}
+
 export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20, checkTimeout = 900 }) {
+  dir = realpathSync(resolve(dir))
+  if (!statSync(dir).isDirectory()) throw new Error("--dir must be an existing directory")
+  assertKeyOutside(dir, keyOut)
   const sh = (cmd, args, input, timeout = 120000) => execFileSync(cmd, args, { cwd: dir, encoding: "utf8", timeout,
     input, stdio: ["pipe", "pipe", "inherit"] }).trim()
   const pause = (seconds) => {
@@ -565,8 +611,8 @@ function main(argv) {
   for (const name of ["dir", "repo", "key-out"]) if (!args[name]) throw new Error(`--${name} is required`)
   const dir = resolve(args.dir)
   const keyOut = resolve(args["key-out"])
-  if (!relative(dir, keyOut).startsWith("..")) throw new Error("--key-out must lie outside the clone")
   try {
+    assertKeyOutside(dir, keyOut)
     apply(p, { dir, repo: args.repo, keyOut, labelDelay: args.labelDelay })
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
