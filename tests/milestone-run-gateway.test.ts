@@ -191,6 +191,9 @@ test("the handoff and README promise no later output and leak nothing", () => {
     const readme = files["coordination/README.md"]
     const launcher = LAUNCHER
     assert.ok(readme.includes("No session, background process or later report follows"))
+    const collapsedReadme = readme.replace(/\s+/g, " ")
+    assert.ok(collapsedReadme.includes(
+      "prints that coordinator's complete handoff at once. No session, background process or later report follows"))
     assert.ok(launcher.includes("nothing more will arrive from it"))
     assert.ok(!launcher.includes("ses-"))
     for (const content of [readme, launcher]) {
@@ -279,7 +282,8 @@ test("invalid provider context or provider mismatch exits 1", () => {
   const runAll = (coord, root) => {
     const run = (...args) => spawnSync(process.execPath, [join(coord, "launcher.mjs"), ...args],
       { cwd: root, encoding: "utf8", timeout: 10000 })
-    for (const args of [["catalog"], ["check", gatewayPlan({ seed: 7 }).modelA], ["launch", gatewayPlan({ seed: 7 }).modelA]]) {
+    for (const args of [["catalog"], ["check", gatewayPlan({ seed: 7 }).modelA],
+      ["launch", gatewayPlan({ seed: 7 }).modelA]]) {
       const r = run(...args)
       assert.equal(r.status, 1, JSON.stringify(args))
       assert.match(r.stderr, /Launcher error/)
