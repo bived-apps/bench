@@ -1,13 +1,18 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { createGhReaders, runMergeGate } from "../.github/scripts/check-merge-gate.mjs"
+import { boundGrantLabel } from "../.github/scripts/authorize-merge-lib.mjs"
 
 const now = Date.parse("2026-11-09T12:00:00.000Z")
-const event = { pull_request: { number: 70, head: { sha: "head-1" }, base: { ref: "bived" } } }
+const head = "1".repeat(40)
+const grant = (baseRef = "bived", headSha = head, number = 70) => boundGrantLabel({
+  number, headSha, baseRef, date: "2026-11-09",
+})
+const event = { pull_request: { number: 70, head: { sha: head }, base: { ref: "bived" } } }
 const pr = {
   baseRefName: "bived",
-  headRefOid: "head-1",
-  labels: ["bive-merge-authorized-until-2026-11-09"],
+  headRefOid: head,
+  labels: ["bive-merge-authorized-until-2026-11-09", grant()],
 }
 const green = [
   { workflow: "bive-tests", name: "tests", bucket: "pass" },
@@ -64,7 +69,7 @@ test("rejects missing authorization before querying checks", async () => {
 
 test("runs for a milestone branch and refuses a base that changed to another branch", async () => {
   const milestoneEvent = { pull_request: { ...event.pull_request, base: { ref: "milestone/0.2" } } }
-  const milestonePR = { ...pr, baseRefName: "milestone/0.2" }
+  const milestonePR = { ...pr, baseRefName: "milestone/0.2", labels: [pr.labels[0], grant("milestone/0.2")] }
   assert.equal((await run({ event: milestoneEvent, readPullRequest: async () => milestonePR })).ok, true)
   await assert.rejects(run({ event: milestoneEvent }), /base changed/)
   await assert.rejects(run({ event: { pull_request: { ...event.pull_request, base: { ref: "main" } } } }), /only runs/)
@@ -80,6 +85,37 @@ test("re-reads labels before passing so a removed grant fails", async () => {
   await assert.rejects(run({
     readPullRequest: async () => reads++ === 0 ? pr : { ...pr, labels: [] },
   }), /exactly one dated merge-authorization label/)
+})
+
+test("a dated label alone no longer authorizes a head", async () => {
+  await assert.rejects(run({
+    readPullRequest: async () => ({ ...pr, labels: [pr.labels[0]] }),
+  }))
+})
+
+test("a grant cannot carry to a new head, another PR or another base", async () => {
+  const next = "2".repeat(40)
+  await assert.rejects(run({
+    event: { pull_request: { ...event.pull_request, head: { sha: next } } },
+    readPullRequest: async () => ({ ...pr, headRefOid: next }),
+  }))
+  await assert.rejects(run({
+    event: { pull_request: { ...event.pull_request, number: 71 } },
+  }))
+  await assert.rejects(run({
+    event: { pull_request: { ...event.pull_request, base: { ref: "milestone/0.2" } } },
+    readPullRequest: async () => ({ ...pr, baseRefName: "milestone/0.2" }),
+  }))
+})
+
+test("a removed or replaced head-bound grant fails the final metadata refresh", async () => {
+  for (const labels of [[pr.labels[0]], [pr.labels[0], grant("bived", "2".repeat(40))]]) {
+    let reads = 0
+    await assert.rejects(run({
+      readPullRequest: async () => reads++ === 0 ? pr : { ...pr, labels },
+    }))
+    assert.equal(reads, 2)
+  }
 })
 
 test("accepts only the intentional coordinator skip", async () => {

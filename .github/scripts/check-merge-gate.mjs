@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { evaluateMergeGate, isIntegrationBranch, validateMergeAuthorization } from "./merge-gate-lib.mjs"
+import { validateBoundAuthorization } from "./authorize-merge-lib.mjs"
 
 const GH_TIMEOUT_MS = 15_000
 const MAX_WAIT_MS = 12 * 60_000
@@ -106,6 +107,10 @@ export async function runMergeGate({
 
     const authorization = validateMergeAuthorization({ labels: pr.labels, baseRef: pr.baseRefName, now: now() })
     if (!authorization.ok) throw new Error(authorization.reason)
+    const binding = validateBoundAuthorization({
+      number: request.number, headSha: pr.headRefOid, baseRef: pr.baseRefName, labels: pr.labels, now: now(),
+    })
+    if (!binding.ok) throw new Error(binding.reason)
 
     const checks = await readChecks({ number: request.number, repository })
     if (checksArePending(checks)) {
@@ -120,6 +125,11 @@ export async function runMergeGate({
     if (current.baseRefName !== pr.baseRefName || current.headRefOid !== pr.headRefOid) {
       throw new Error("pull request changed during merge-gate validation; refusing stale results")
     }
+    const currentBinding = validateBoundAuthorization({
+      number: request.number, headSha: current.headRefOid, baseRef: current.baseRefName,
+      labels: current.labels, now: now(),
+    })
+    if (!currentBinding.ok) throw new Error(currentBinding.reason)
     const result = evaluateMergeGate({ labels: current.labels, baseRef: current.baseRefName, checks, now: now() })
     if (!result.ok) throw new Error(result.reason)
     return result

@@ -6,15 +6,12 @@ commands. `<n>` is the issue, `<slug>` a short name, `<base>` the integration br
 
 ## Session start
 
-The label the owner applies to authorize a merge must exist that day (owner, 2026-11-10). Create it, never rename an
-older one: renaming moves the label onto every pull request that carries it and would re-date the owner's past
-authorizations. The coordinator never applies it.
-
-```bash
-label="bive-merge-authorized-until-$(date -u +%F)"
-gh label list --search "$label" --json name --jq '.[].name' | grep -qx "$label" \
-  || gh label create "$label" --color B60205 --description "Owner only: authorizes one merge through $(date -u +%F) UTC"
-```
+The owner authorizes a reviewed head with **Actions → bive-authorize-merge → Run workflow** on the default branch,
+entering the PR number and its full head SHA. The action creates today's UTC label and a PR/head/base/date-bound
+grant, then explicitly reruns the gate. See [`MERGE-AUTHORIZATION.md`](MERGE-AUTHORIZATION.md) for setup.
+Never rename an older authorization label: doing so would re-date past approvals. A coordinator may create today's
+empty label as the core prompt directs, but never applies either grant, dispatches the action, or reruns it on the
+owner's behalf. An owner decision in chat authorizes a task, not the coordinator's use of the owner-only action.
 
 ## Start a delegate (step 5)
 
@@ -73,9 +70,11 @@ in the worktree if the head changed since the report, and the diff. Then wait fo
 ```bash
 gh pr checks <pr> --watch                      # returns when the checks finish; every one but bive-merge-gate green
 gh pr review <pr> --approve --body "Ready to merge: <the checks you ran>"
+# The action reads a comment, not a review; include the exact head and role.
+gh pr comment <pr> --body "Ready to merge: coordinator <model>; head <full-sha>; checks <commands and results>"
 ```
 
-The supervisor merges (`gh pr merge <pr> --merge --match-head-commit <sha>`, after the label); its queue is
+The supervisor merges (`gh pr merge <pr> --merge --match-head-commit <sha>`, after owner authorization); its queue is
 `gh pr list --base <base> --search "review:approved"`. The coordinator never merges, closes or pushes
 to `<base>`. To be told when a pull request is merged without a watcher plugin: `gh pr checks` for the checks, then
 `until [ "$(gh pr view <pr> --json state --jq .state)" != OPEN ]; do sleep 60; done` in the shell, when a session
@@ -86,9 +85,10 @@ Once merged, if the issue is still open (GitHub closes on the default branch onl
 gh issue close <n> --comment "Done in <base> (PR #<pr>)"
 ```
 
-`bive-merge-gate / merge-gate` stays red on every pull request until the owner applies the dated label
-`bive-merge-authorized-until-YYYY-MM-DD` (`docs/REQUIRED-CHECKS.md`): read that red as "waiting for the owner's label",
-not as a failure to brief again. The coordinator never applies the label.
+`bive-merge-gate / merge-gate` stays red until the owner authorizes that exact head with the action
+(`docs/REQUIRED-CHECKS.md`): read that red as "waiting for owner authorization", not as a failure to brief again.
+A dated label without its matching bound grant is insufficient. A new head or base requires fresh authorization.
+The coordinator never grants it. Successful dispatch requests a gate rerun; only the actual green gate permits merge.
 
 ## After the batch (step 9)
 

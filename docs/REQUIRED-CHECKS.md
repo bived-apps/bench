@@ -42,29 +42,61 @@ These run on GitHub and appear as commit statuses on a pull request.
 
 - **Workflow file**: `.github/workflows/bive-merge-gate.yml`; script `.github/scripts/check-merge-gate.mjs`, decision
   in `.github/scripts/merge-gate-lib.mjs`.
-- **Job**: `check`
+- **Job**: `merge-gate`
 - **Triggers**: `pull_request_target` on pull requests targeting `bived` or `milestone/**`, types `opened`,
   `synchronize`, `reopened`, `labeled`, `unlabeled`. It checks out the base commit only and never runs code from the
   pull request's head; its permissions are read-only (`contents`, `pull-requests`, `checks`).
 - **Runs**: `ubuntu-latest`, Node 22, timeout 15 minutes. It waits (every 10 seconds, at most 12 minutes, each `gh`
   call limited to 15 seconds) until the other checks have finished, then decides.
-- **Authorization**: exactly one label `bive-merge-authorized-until-YYYY-MM-DD` on the pull request, a real calendar
-  date, valid through 23:59:59 UTC of that date and only while the base is `bived` or `milestone/<name>` (one path
-  segment). Only the owner applies it, after the coordinator's approval and when the supervisor is about to merge;
-  the coordinator never does, also on its own pull requests. Adding or removing it re-runs the gate.
-- **Red before the label is expected**: on every pull request without the label the gate fails with "exactly one
-  dated merge-authorization label is required". It means "waiting for the owner", not a failure to fix.
+- **Authorization**: exactly one label `bive-merge-authorized-until-YYYY-MM-DD` and one matching `bive-grant-*`
+  label. The date must be real and is valid through 23:59:59.999 UTC, only on `bived` or `milestone/<name>` (one path
+  segment). The bound grant is derived from the PR number, full head SHA, base and expiry date; a push, retarget,
+  another PR or changed date invalidates it. It is binding metadata, not a signature or proof of a human.
+  Only the owner grants authorization, using the manual action after the coordinator's hand-over and when the
+  supervisor is about to merge. Neither coordinator nor delegate may invoke that action on the owner's behalf.
+- **Red before authorization is expected**: a missing dated label or matching bound grant means "waiting for the
+  owner", not a failure to fix. A dated label alone is no longer sufficient.
 - **What it checks**: the authorization above; exactly one `bive-tests / tests` and one `bive-inviolable / check`,
   both `pass`; every other check except its own `pass` as well. The one accepted exception: `bive-inviolable / check`
   may be `skipping` on a pull request labelled `coordinator` (its job condition skips it there). It re-reads the pull
   request after reading the checks and fails if the head, base or labels changed.
-- **Fails on**: a missing, malformed, duplicate or expired label; any check pending past the deadline, missing,
+- **Fails on**: a missing, malformed, duplicate, expired or mismatched grant; any check pending past the deadline, missing,
   skipped (other than the exception), failed or cancelled; a pull request whose head or base changed during the run.
 - **Several coordinators**: each approves only pull requests based on its own milestone branch; the gate does not
   check which coordinator approved, the supervisor does (`AGENTS.md` › Roles).
-- **Expiry is not re-evaluated on its own**: a gate that passed stays green after its date. The owner applies the
-  label dated the day of the merge, and the supervisor merges that day with `gh pr merge --merge
-  --match-head-commit <sha>`, so a push after the gate's run refuses the merge.
+- **Expiry is not re-evaluated on its own**: a gate that passed stays green after its date. The supervisor must merge
+  that UTC day with `gh pr merge --merge --match-head-commit <sha>` and re-run the gate immediately before merging
+  if there is any delay. Crossing UTC midnight requires fresh owner authorization. Pinning the merge protects
+  against a changed head, not against expiry or a changed base: check those too.
+
+### `bive-authorize-merge / authorize` (owner action, not a required PR check)
+
+- **Workflow file**: `.github/workflows/bive-authorize-merge.yml`; helper `.github/scripts/authorize-merge.mjs`.
+- **Trigger**: `workflow_dispatch` on the repository's default branch, with PR number and full reviewed head SHA.
+- **Setup**: repository variable `BIVE_MERGE_OWNER` names the human owner's GitHub login, not an organisation name.
+  Missing configuration fails closed. See [`MERGE-AUTHORIZATION.md`](MERGE-AUTHORIZATION.md).
+- **Trust**: verifies original and rerun actor against that owner and the exact default-branch workflow ref; checks
+  out default-branch code only, never PR-head code; no stored PAT. Account identity cannot distinguish a human
+  from an agent using the same account: agents remain prohibited from dispatching or rerunning this action.
+- **Runs**: Node 22, timeout five minutes; each GitHub request bounded to 15 seconds, with bounded pagination.
+  Token permissions: contents/pull-requests read, issues/actions write. Never merges or approves a PR.
+- **Checks**: open, non-draft, same-repository PR on an allowed base; exact head; a latest `Ready to merge`
+  comment containing that head and the coordinator role; a completed, matching trusted gate run to rerun.
+  A comment is procedural evidence, not cryptographic role verification. The supervisor still reviews the hand-over.
+- **Effect**: preserves unrelated labels, replaces old authorization metadata with today's bound grant, rechecks
+  the head/base/state and grant, and explicitly reruns the matching gate. GITHUB_TOKEN label changes do not trigger
+  `pull_request_target`, so relying on a label event would leave the gate red.
+  Gate runs use the exact title `Merge gate PR #<number> head <sha> base <base>`; the action checks that title,
+  workflow path and event. `pull_request_target` runs may have an empty API `pull_requests` array, so it is not
+  used for matching. Older runs without this title cannot be selected; deploy the gate update before using the action.
+  An already-open PR may need a fresh normal `pull_request_target` event after rollout (for example an owner adding
+  a harmless label) to create such a run. Rerunning an older run does not update its frozen workflow/base revision.
+- **Failure**: partial writes are reported and the new bound grant is removed on subsequent failure, with cleanup
+  failures explicit. A successful action means the gate rerun was requested, not that checks passed or merging is
+  authorized already. Read the actual gate result.
+- **Deployment**: the workflow/helper must reach the default branch to expose the button, and gate/helper changes
+  must reach each relevant integration base. Before rollout, the old gate is used for bootstrap; do not claim the
+  action is available from an unmerged feature branch. Frozen benchmark fixture revisions are not rewritten.
 
 ## Branch protection (owner, in GitHub's settings)
 

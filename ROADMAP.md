@@ -25,6 +25,21 @@ here is committed with the code it describes (an item started → `doing`, finis
 
 ## Epics
 
+### Owner merge-authorization action (#69, owner-approved 2026-11-13)
+
+**Doing, not deployed.** Branch `milestone/merge-authorization`, coordinator `openai/gpt-6.1-sol`.
+Gate 1 approved: #70 delegate helper/CLI/tests/reference, then #71 coordinator workflow, gate integration and policy.
+Helper review is blocked on canonical attribution and requested timeout/partial-write safety fixes. Coordinator
+workflow/gate checks: 17 pass in a temporary helper overlay; integration must be retested after #70 is merged.
+Files: `.github/scripts/authorize-merge{,-lib}.mjs`, `.github/scripts/check-merge-gate.mjs`,
+`.github/workflows/{bive-authorize-merge,bive-merge-gate}.yml`, focused authorization/gate tests, `docs/MERGE-AUTHORIZATION.md`,
+`docs/{COORDINATING,REQUIRED-CHECKS}.md`, `AGENTS.md`, `.bive/prompts/project/{COORDINATOR,DELEGATE,SUPERVISOR}.md`,
+this file and `HANDOFF.md`. Core role prompts and frozen benchmark fixtures are not edited.
+
+Done when the owner can run one manual action for a reviewed PR/head, its UTC dated and bound grant are applied,
+the actual gate reruns and passes only with valid authorization and CI, and rollout to default/integration branches
+is documented. No agent invokes the owner action or merges its own work. Bootstrap uses the existing gate.
+
 ### 0.1 — Bive installs itself
 
 Done when the owner's first project runs with Bive installed and one of its issues has gone through the whole flow (brief, worktree,

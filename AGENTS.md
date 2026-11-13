@@ -11,7 +11,9 @@ Read this file, then [`HANDOFF.md`](HANDOFF.md), before changing anything. Your 
   gates, and is **the only one who merges or closes a pull request**, on the integration branch as on `main`, with
   GitHub's merge commit (`gh pr merge --merge`), never squash (it would make the owner the author). Never acts as
   coordinator or delegate: whoever merges did not write (owner, 2026-11-09). Merges only once the owner's dated label
-  has turned `bive-merge-gate / merge-gate` green (`docs/REQUIRED-CHECKS.md`). Starts the coordinators and arbitrates
+  and matching PR/head/base/date-bound grant have turned `bive-merge-gate / merge-gate` green
+  (`docs/REQUIRED-CHECKS.md`). The owner applies these through the manual authorization action; an agent never
+  dispatches or reruns that action on the owner's behalf. Starts the coordinators and arbitrates
   the files two milestones share (owner, 2026-11-09).
 - **Coordinator**: one per milestone branch (`milestone/<name>`; Bive's own is `bived`), at most two at once, each
   started by the supervisor in its own clone; it approves only pull requests based on its branch. Splits, briefs,

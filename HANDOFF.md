@@ -45,6 +45,22 @@ the template that a role or a human does not read during a task.
 
 ## Decisions
 
+- **Owner action for merge authorization (owner, 2026-11-13, #69)**: the owner approved a manual GitHub Action
+  instead of selecting the dated label, then approved the split: #70 delegate helper/tests and #71 coordinator
+  workflow/gate/policy integration. Work branch `milestone/merge-authorization`, coordinator `openai/gpt-6.1-sol`;
+  candidate helper uses the configured serving alias `opencode-go/beam-free` (not a qualification draw).
+  The action creates the dated and PR/head/base/date-bound labels and explicitly reruns the gate; no agent may
+  dispatch or rerun it on the owner's behalf. It does not merge. **Not deployed**: #70 must be reviewed/merged,
+  then #71, and rollout must reach the default and integration branches. Repository variable `BIVE_MERGE_OWNER`
+  must identify the human owner. Until rollout, bootstrap via the existing manual gate; no grant was applied here.
+  Role core prompts are unchanged; stricter instructions are in their project additions. Frozen fixture revisions
+  and the pause on draws remain unchanged.
+  Review checkpoint: helper commit `3467a52` passed 18 focused tests, but its canonical maker/model/version was
+  not established and its author is the serving alias. The delegate corrected its report to blocked. A coordinator
+  regression reproduced a valid grant left behind after an accepted-but-timed-out label POST; fixes are requested,
+  with further commits held for the owner's attribution decision. The coordinator's 17 workflow/gate checks passed
+  in a temporary overlay using that helper; this is not a passing self-contained integration branch or deployment.
+
 - **Owner-approved coordinator teams (owner, 2026-11-13)**: prefer the strongest suitable verified-free usable
   coordinator; otherwise recommend a suitable usable coordinator from the current supervisor provider. Before launch
   or substitution, ask the owner to approve the concrete team, cost, availability evidence, alternatives, and fallback,
