@@ -1,6 +1,6 @@
 // Standalone synthetic decision case. No network, subprocesses, or model SDKs.
 import { appendFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs"
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path"
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { fileURLToPath } from "node:url"
 
 const VERSION = "coordinator-availability v1"
@@ -190,7 +190,7 @@ function exists(path) {
 
 function within(root, path) {
   const rel = relative(root, path)
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel))
+  return rel === "" || (rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel))
 }
 
 export function apply(draw, { dir, keyOut, dryRun = false }) {

@@ -30,7 +30,10 @@ The builder creates only `coordination/` in the workspace, plus the separate key
 The workspace and key's parent directory must already exist. It preflights both
 outputs, resolves symlink aliases, refuses any existing `coordination/` (including
 symlinks), and refuses existing keys, even dangling symlinks. Keys must be outside
-the workspace's real directory. `--dry-run` writes nothing; with both paths supplied
+the workspace's real directory. Containment uses path segments, not filename
+prefixes: `..key.json` and `..private/key.json` inside the workspace are still
+private-key leaks and are refused, including through symlink aliases.
+`--dry-run` writes nothing; with both paths supplied
 it also runs path preflight. A build error is reported with nonzero exit status.
 Exclusive creates prevent overwrites after preflight; an I/O failure can leave
 partial material. Do not administer a partial draw: inspect it and use a new empty

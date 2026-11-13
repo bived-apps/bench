@@ -212,6 +212,48 @@ test("all outputs preflight before writes; existing files, trees and symlink ali
   assert.deepEqual(readdirSync(linked.dir), [])
 })
 
+test("dot-prefixed in-workspace keys are rejected through direct and alias paths before any writes", () => {
+  for (const nested of [false, true]) {
+    for (const mode of ["direct", "key-alias", "parent-alias", "workspace-alias"]) {
+      const f = fixture()
+      const parent = nested ? join(f.dir, "..private") : f.dir
+      if (nested) mkdirSync(parent)
+      const name = nested ? "key.json" : "..key.json"
+      let dir = f.dir
+      let keyOut = join(parent, name)
+      const alias = join(f.root, "alias")
+      if (mode === "key-alias") {
+        symlinkSync(f.dir, alias)
+        keyOut = nested ? join(alias, "..private", name) : join(alias, name)
+      }
+      if (mode === "parent-alias") {
+        symlinkSync(parent, alias)
+        keyOut = join(alias, name)
+      }
+      if (mode === "workspace-alias") {
+        symlinkSync(f.dir, alias)
+        dir = alias
+      }
+      for (const dryRun of [true, false]) {
+        assert.throws(() => apply(f.draw, { dir, keyOut, dryRun }), /key must be outside workspace/,
+          `${nested ? "..private/key.json" : name}, ${mode}, dryRun=${dryRun}`)
+        assert.deepEqual(readdirSync(f.dir), nested ? ["..private"] : [])
+        if (nested) assert.deepEqual(readdirSync(parent), [])
+      }
+    }
+  }
+})
+
+test("dot-prefixed sibling directories outside the workspace remain valid key locations", () => {
+  const f = fixture()
+  const parent = join(f.root, "..private")
+  mkdirSync(parent)
+  const keyOut = join(parent, "..key.json")
+  apply(f.draw, { dir: f.dir, keyOut })
+  assert.deepEqual(JSON.parse(readFileSync(keyOut, "utf8")), f.draw.key)
+  assert.deepEqual(readdirSync(f.dir), ["coordination"])
+})
+
 test("dry-run writes nothing and strict CLI rejects invalid flags, seeds, scenarios and paths", () => {
   const f = fixture()
   const base = ["--seed", "7", "--dir", f.dir, "--key-out", f.keyOut]
