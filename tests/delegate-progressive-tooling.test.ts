@@ -10,16 +10,16 @@ const read = (name: string) => readFileSync(new URL(`../delegate-tests/progressi
 describe("package.json", () => {
   const pkg = JSON.parse(read("package.json"))
 
-  test("private ESM package on Node 22 or later, with the two scripts", () => {
+  test("private ESM package on the supported Node 22 and 24 lines, with the two scripts", () => {
     assert.equal(pkg.private, true)
     assert.equal(pkg.type, "module")
-    assert.equal(pkg.engines.node, ">=22")
+    assert.equal(pkg.engines.node, "^22.13.0 || >=24")
     assert.equal(pkg.scripts.lint, "eslint --max-warnings 0 .")
     assert.equal(pkg.scripts["lint:smoke"], "node lint-smoke.mjs")
   })
 
-  test("ESLint is the only dependency, pinned exactly to 9.39.1", () => {
-    assert.deepEqual(pkg.devDependencies, { eslint: "9.39.1" })
+  test("ESLint is the only dependency, pinned exactly to 10.14.0", () => {
+    assert.deepEqual(pkg.devDependencies, { eslint: "10.14.0" })
     assert.equal(pkg.dependencies, undefined)
   })
 })
@@ -29,8 +29,8 @@ describe("package-lock.json", () => {
 
   test("the root entry and the installed eslint agree with the pin", () => {
     assert.ok(lock.lockfileVersion >= 3)
-    assert.deepEqual(lock.packages[""].devDependencies, { eslint: "9.39.1" })
-    assert.equal(lock.packages["node_modules/eslint"].version, "9.39.1")
+    assert.deepEqual(lock.packages[""].devDependencies, { eslint: "10.14.0" })
+    assert.equal(lock.packages["node_modules/eslint"].version, "10.14.0")
     assert.match(lock.packages["node_modules/eslint"].resolved, /^https:\/\/registry\.npmjs\.org\//)
   })
 })

@@ -5,13 +5,13 @@
   "description": "Lint tooling for the progressive delegate benchmark (tooling only: no fixture, scorer, launcher or ledger yet).",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": "^22.13.0 || >=24"
   },
   "scripts": {
     "lint": "eslint --max-warnings 0 .",
     "lint:smoke": "node lint-smoke.mjs"
   },
   "devDependencies": {
-    "eslint": "9.39.1"
+    "eslint": "10.14.0"
   }
 }

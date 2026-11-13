@@ -1,18 +1,21 @@
 # Progressive delegate benchmark: lint tooling
 
-Status: **tooling only**. This directory holds the Node 22 lint setup of the progressive delegate benchmark. It has no
+Status: **tooling only**. This directory holds the lint setup of the progressive delegate benchmark. It has no
 fixture, scorer, launcher or ledger yet, runs no candidate model, and is not a release, a qualification or a registry
 upload. Its results validate nobody (`RESULTS.md`).
 
 ## Runtime and installation
 
-- Node 22 or later (the repository's runtime, see `AGENTS.md` › Project rules).
-- ESLint 9.39.1 is the only dependency, pinned exactly in `package.json` and `package-lock.json`. Its source is
+- Node `^22.13.0 || >=24` (the `engines` field of `package.json`; checked on Node 22.23.4). This is the ESLint 10
+  engine range, `^20.19.0 || ^22.13.0 || >=24`, narrowed to the lines the repository runs on.
+- ESLint 10.14.0 is the only dependency, pinned exactly in `package.json` and `package-lock.json`. Its source is
   <https://github.com/eslint/eslint> and it is released under the MIT licence.
-- Install from the lockfile, with a cache inside the checkout and lifecycle scripts ignored:
+- Install from the lockfile only (`npm ci`, never `npm install`, so the lock is not rewritten), with a cache inside the
+  checkout, lifecycle scripts ignored, no audit, no funding, no global install, and bounded fetches (15 s timeout, no
+  retries). Run it under a 120 s command timeout:
 
 ```sh
-npm --prefix delegate-tests/progressive install --ignore-scripts --no-audit --no-fund \
+npm --prefix delegate-tests/progressive ci --ignore-scripts --no-audit --no-fund \
   --cache .bive/state/npm-cache --fetch-timeout=15000 --fetch-retries=0
 ```
 
