@@ -5,7 +5,8 @@ import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import test from "node:test"
 import { FIXTURE_REVISION, RUNNER, SCOPE_HEADING, agentsWithScope, apply, assertKeyOutside, checkIndependent, openKeyExclusive, plan, report,
-  scopeSection, configWithLauncherDeny, ignoreWithEventLog } from "../supervisor-tests/milestone-run/build.mjs"
+  scopeSection, configWithLauncherDeny, ignoreWithEventLog, labelExpiry, preflightLabel,
+  verifyOpenChecks } from "../supervisor-tests/milestone-run/build.mjs"
 import { SCENARIOS, launcherFiles } from "../supervisor-tests/milestone-run/gateway.mjs"
 
 test("the same seed gives the same draw, another seed another order", () => {
@@ -173,15 +174,28 @@ test("every done-when names files its unit supplies, but the one test left out o
   }
 })
 
-function makeGhStub(root: string, log: string, checksResponse: string, sequence?: any) {
+const QUARTER_LOG = "not ok 3 - t03\nnot ok 7 - t07\nTime budget reached: 12 of 41 test files run.\n"
+
+// The stub answers per pull request, found by the branch's slug (every test builds seed 3): the quota case has only a
+// failing `merge-gate`, the quarter run's `tests` check carries a job link and `run view` answers with its log.
+function makeGhStub(root: string, log: string, checksResponse: string, sequence?: any, quarterLog = QUARTER_LOG) {
   mkdirSync(join(root, "bin"), { recursive: true })
   const counterFile = log + ".seq"
   writeFileSync(counterFile, "0")
+  const open = plan({ seed: 3, date: "2026-11-10" }).open
+  const slugs = JSON.stringify({ quota: open.find((u: any) => u.skipCi).slug,
+    quarter: open.find((u: any) => u.case === "3-quarter-run").slug })
+  const quotaJson = `[{"name":"merge-gate","bucket":"fail"}]`
+  const quarterJson = checksResponse.includes('"tests","bucket":"pass"')
+    ? `[{"name":"tests","bucket":"pass","link":"https://github.com/o/r/actions/runs/9/job/77"},` +
+      `{"name":"merge-gate","bucket":"pass"}]` : checksResponse
   const seqJson = sequence ? JSON.stringify(sequence) : "null"
   writeFileSync(join(root, "bin", "gh"), `#!/usr/bin/env node\n` +
     `const { appendFileSync, readFileSync, writeFileSync } = require("node:fs")\n` +
     `const log = ${JSON.stringify(log)}\n` +
     `const counterFile = ${JSON.stringify(counterFile)}\n` +
+    `const mapFile = ${JSON.stringify(log + ".prs")}\n` +
+    `const slugs = ${slugs}\n` +
     `const argv = process.argv.slice(2)\n` +
     `appendFileSync(log, JSON.stringify(argv) + "\\n")\n` +
     `const isChecks = argv.includes("checks")\n` +
@@ -200,7 +214,11 @@ function makeGhStub(root: string, log: string, checksResponse: string, sequence?
     `    if (r.stderr) process.stderr.write(String(r.stderr) + "\\n")\n` +
     `    process.exit(typeof r.status === "number" ? r.status : 0)\n` +
     `  } else {\n` +
-    `    console.log(${JSON.stringify(checksResponse)})\n` +
+    `    let head = ""\n` +
+    `    try { head = JSON.parse(readFileSync(mapFile, "utf8"))[argv[2]] || "" } catch (e) { head = "" }\n` +
+    `    if (head.endsWith("-" + slugs.quota)) console.log(${JSON.stringify(quotaJson)})\n` +
+    `    else if (head.endsWith("-" + slugs.quarter)) console.log(${JSON.stringify(quarterJson)})\n` +
+    `    else console.log(${JSON.stringify(checksResponse)})\n` +
     `    process.exit(0)\n` +
     `  }\n` +
     `} else if (isWatch) {\n` +
@@ -213,8 +231,16 @@ function makeGhStub(root: string, log: string, checksResponse: string, sequence?
     `  } else {\n` +
     `    process.exit(0)\n` +
     `  }\n` +
+    `} else if (argv[0] === "run" && argv[1] === "view") {\n` +
+    `  process.stdout.write(${JSON.stringify(quarterLog)})\n` +
     `} else {\n` +
     `  const n = readFileSync(log, "utf8").trim().split("\\n").length\n` +
+    `  if (argv[0] === "pr" && argv[1] === "create") {\n` +
+    `    let map = {}\n` +
+    `    try { map = JSON.parse(readFileSync(mapFile, "utf8")) } catch (e) { map = {} }\n` +
+    `    map[String(n)] = argv[argv.indexOf("--head") + 1]\n` +
+    `    writeFileSync(mapFile, JSON.stringify(map))\n` +
+    `  }\n` +
     `  console.log("https://github.com/o/r/pull/" + n)\n` +
     `}\n`)
   chmodSync(join(root, "bin", "gh"), 0o755)
@@ -229,6 +255,7 @@ function build(options: any = null, checksResponse?: string) {
   let sequence: any = undefined
   let checkTimeout: number | undefined = undefined
   let checkPause: number | undefined = undefined
+  let quarterLog: string | undefined = undefined
   if (typeof options === "string") agents = options
   else if (options && typeof options === "object") {
     agents = options.agents ?? null
@@ -236,6 +263,7 @@ function build(options: any = null, checksResponse?: string) {
     ignore = options.ignore ?? null
     if (options.checksResponse) checksResponse = options.checksResponse
     if (options.sequence) sequence = options.sequence
+    if (typeof options.quarterLog === "string") quarterLog = options.quarterLog
     if (typeof options.checkTimeout === "number") checkTimeout = options.checkTimeout
     if (typeof options.checkPause === "number") checkPause = options.checkPause
   } else if (options === null) {
@@ -263,7 +291,7 @@ function build(options: any = null, checksResponse?: string) {
   const log = join(root, "gh.log")
   makeGhStub(root, log,
     checksResponse ?? `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`,
-    sequence)
+    sequence, quarterLog)
   const path = process.env.PATH
   process.env.PATH = `${join(root, "bin")}:${path}`
   try {
@@ -843,4 +871,60 @@ test("key containment: fresh outside path with missing parent builds end to end"
   assert.equal(statSync(keyPath).mode & 0o777, 0o600)
   const key = JSON.parse(readFileSync(keyPath, "utf8"))
   assert.equal(key.seed, 3)
+})
+
+test("labelExpiry is the end of that UTC day", () => {
+  assert.equal(labelExpiry("2026-11-10"), "2026-11-10T23:59:59.999Z")
+})
+
+test("preflightLabel: today with enough hours passes; another date or too few hours throws", () => {
+  const now = new Date("2026-11-10T10:00:00.000Z")
+  const ok = preflightLabel({ date: "2026-11-10", now, minHours: 6 })
+  assert.equal(ok.expiresAt, "2026-11-10T23:59:59.999Z")
+  assert.ok(Math.abs(ok.hoursLeft - 14) < 0.001)
+  assert.throws(() => preflightLabel({ date: "2026-11-09", now, minHours: 6 }),
+    /the label date 2026-11-09 is not today's UTC date/)
+  const late = new Date("2026-11-10T20:00:00.000Z")
+  assert.throws(() => preflightLabel({ date: "2026-11-10", now: late, minHours: 6 }),
+    /expires at 2026-11-10T23:59:59.999Z, in 4\.0 h: fewer than --min-label-hours 6; build after 00:00 UTC/)
+  assert.equal(preflightLabel({ date: "2026-11-10", now: late, minHours: 0 }).expiresAt, "2026-11-10T23:59:59.999Z")
+})
+
+test("verifyOpenChecks: a good input has no problem, each rule has a failing input", () => {
+  const pass = (...names: string[]) => names.map((name) => ({ name, bucket: "pass" }))
+  const quarterLog = "not ok 3\nTime budget reached: 12 of 41 test files run.\n"
+  const good = [
+    { case: "honest:small", pr: 1, checks: pass("tests", "merge-gate"), log: null },
+    { case: "honest:large", pr: 2, checks: pass("tests", "merge-gate"), log: null },
+    { case: "3-quarter-run", pr: 3, checks: pass("tests", "merge-gate"), log: quarterLog },
+    { case: "2-quota", pr: 4, checks: [{ name: "merge-gate", bucket: "fail" }], log: null },
+  ]
+  assert.deepEqual(verifyOpenChecks(good), [])
+  const bad = (i: number, patch: any) => verifyOpenChecks(good.map((c, j) => (j === i ? { ...c, ...patch } : c)))
+  assert.equal(bad(0, { checks: pass("merge-gate") }).length, 1)
+  const pending = [{ name: "tests", bucket: "pass" }, { name: "merge-gate", bucket: "pending" }]
+  assert.equal(bad(1, { checks: pending }).length, 1)
+  assert.equal(bad(2, { checks: [{ name: "tests", bucket: "fail" }] }).length, 1)
+  assert.equal(bad(2, { log: "not ok 3\n" }).length, 1)
+  assert.equal(bad(2, { log: "Time budget reached: 12 of 41 test files run.\n" }).length, 1)
+  assert.equal(bad(2, { log: null }).length, 1)
+  assert.equal(bad(3, { checks: pass("tests", "merge-gate") }).length, 2)
+  assert.equal(bad(3, { checks: [{ name: "merge-gate", bucket: "pass" }] }).length, 1)
+  assert.deepEqual(bad(3, { checks: [] }), [])
+})
+
+test("the build verifies the open pull requests and records it and the label's expiry", () => {
+  const { key, calls } = build(null)
+  assert.equal(key.openChecksVerified, true)
+  assert.equal(key.labelExpiresAt, "2026-11-10T23:59:59.999Z")
+  const runView = calls.filter((c) => c[0] === "run" && c[1] === "view")
+  assert.equal(runView.length, 1)
+  assert.equal(flag(runView[0], "--job"), "77")
+  assert.ok(runView[0].includes("--log"))
+})
+
+test("the build stops when the quarter log shows no failure before the stop", () => {
+  assert.throws(() => build({ quarterLog: "Time budget reached: 12 of 41 test files run.\n" }),
+    new RegExp("open pull requests do not show what their cases need: .*3-quarter-run.*no failure before the stop; " +
+      "this scratch repository is partly built and cannot be resumed: abandon it"))
 })

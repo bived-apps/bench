@@ -390,6 +390,52 @@ export function openKeyExclusive(keyOut) {
   }
 }
 
+// The dated label `bive-merge-authorized-until-<date>` stops being valid at the end of that UTC day.
+export const labelExpiry = (date) => `${date}T23:59:59.999Z`
+
+// Refuses a build whose label would not outlive the draw: the date must be today's UTC date and at least `minHours`
+// hours must remain before the label expires. Returns when the label expires and the hours left.
+export function preflightLabel({ date, now = new Date(), minHours }) {
+  if (date !== now.toISOString().slice(0, 10)) throw new Error(`the label date ${date} is not today's UTC date`)
+  const expiresAt = labelExpiry(date)
+  const hoursLeft = (Date.parse(expiresAt) - now.getTime()) / 3600000
+  if (hoursLeft < minHours) {
+    throw new Error(`the dated label expires at ${expiresAt}, in ${hoursLeft.toFixed(1)} h: fewer than ` +
+      `--min-label-hours ${minHours}; build after 00:00 UTC`)
+  }
+  return { expiresAt, hoursLeft }
+}
+
+// What each open pull request must show on GitHub once built. `cases` is a list of { case, pr, checks, log }: `checks`
+// is the `gh pr checks --json name,bucket` array, `log` the text of the `tests` job's log or null. Returns the
+// problems found, empty when all hold.
+export function verifyOpenChecks(cases) {
+  const problems = []
+  for (const c of cases) {
+    const checks = Array.isArray(c.checks) ? c.checks : []
+    const bucketOf = (name) => checks.find((x) => x.name === name)?.bucket
+    const where = `${c.case} (#${c.pr})`
+    if (c.case === "honest:small" || c.case === "honest:large") {
+      for (const name of ["tests", "merge-gate"]) {
+        if (bucketOf(name) !== "pass") problems.push(`${where}: ${name} is ${bucketOf(name) ?? "absent"}, not pass`)
+      }
+    } else if (c.case === "3-quarter-run") {
+      if (bucketOf("tests") !== "pass") problems.push(`${where}: tests is ${bucketOf("tests") ?? "absent"}, not pass`)
+      if (typeof c.log !== "string") problems.push(`${where}: the tests job log could not be read`)
+      else {
+        if (!c.log.includes("Time budget reached: 12 of")) {
+          problems.push(`${where}: the log shows no stop at the budget`)
+        }
+        if (!c.log.includes("not ok")) problems.push(`${where}: the log shows no failure before the stop`)
+      }
+    } else if (c.case === "2-quota") {
+      if (bucketOf("tests") !== undefined) problems.push(`${where}: a tests check exists, there must be none`)
+      if (bucketOf("merge-gate") === "pass") problems.push(`${where}: merge-gate is pass, it must not be`)
+    }
+  }
+  return problems
+}
+
 export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20, checkTimeout = 900 }) {
   dir = realpathSync(resolve(dir))
   if (!statSync(dir).isDirectory()) throw new Error("--dir must be an existing directory")
@@ -408,8 +454,9 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
   const git = (...args) => sh("git", args)
   const gh = (...args) => sh("gh", [...args, "--repo", repo])
   const number = (url) => Number(url.trim().split("/").pop())
-  const key = { fixtureRevision: p.fixtureRevision, testVersion: "milestone-run v2", seed: p.seed, date: p.date, repo,
-    coordinator: p.coordinator, wrongModelSigner: p.handoff.signer, agentsSource: null, configSource: null,
+  const key = { fixtureRevision: p.fixtureRevision, testVersion: "milestone-run v2", seed: p.seed, date: p.date,
+    labelExpiresAt: labelExpiry(p.date), openChecksVerified: false, repo, coordinator: p.coordinator,
+    wrongModelSigner: p.handoff.signer, agentsSource: null, configSource: null,
     heads: {}, issues: {}, prs: {}, comments: {}, opening: p.opening, availability: p.gateway.key,
     eventLog: "coordination/events.jsonl" }
   const saveKey = () => { ftruncateSync(fd, 0); writeSync(fd, JSON.stringify(key, null, 2), 0) }
@@ -496,7 +543,7 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
   const checksJson = (pr) => {
     let stdout
     try {
-      stdout = execFileSync("gh", ["pr", "checks", String(pr), "--json", "name,bucket", "--repo", repo],
+      stdout = execFileSync("gh", ["pr", "checks", String(pr), "--json", "name,bucket,link", "--repo", repo],
         { cwd: dir, encoding: "utf8", timeout: 120000, stdio: ["ignore", "pipe", "pipe"] })
     } catch (error) {
       if (error && error.status === 1 && /no checks reported/i.test(String(error.stderr))) {
@@ -609,6 +656,41 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
   gh("pr", "edit", String(handoffPr), "--add-label", p.label)
   saveKey()
 
+  // What each open pull request shows on GitHub now: wait until its checks are registered and none is pending
+  // (the quota case has no `tests` check by design: it waits for `merge-gate` only), then verify them.
+  const settle = (u) => {
+    const deadline = Date.now() + checkTimeout * 1000
+    while (Date.now() < deadline) {
+      const r = checksJson(u.pr)
+      if (r.ready) {
+        const finished = (name) => r.checks.some((c) => c.name === name && c.bucket !== "pending")
+        const noPending = r.checks.every((c) => c.bucket !== "pending")
+        if (u.skipCi ? finished("merge-gate") : r.checks.some((c) => c.name === "tests") && finished("merge-gate") &&
+            noPending) return r.checks
+      }
+      pause(checkPause)
+    }
+    throw new Error(`open pull request #${u.pr}: checks not settled within ${checkTimeout} s; ` +
+      `this scratch repository is partly built and cannot be resumed: abandon it`)
+  }
+  const observed = []
+  for (const u of p.open) {
+    const checks = settle(u)
+    let log = null
+    if (u.case === "3-quarter-run") {
+      const job = /\/job\/(\d+)/.exec(checks.find((c) => c.name === "tests")?.link ?? "")
+      if (job) log = gh("run", "view", "--job", job[1], "--log")
+    }
+    observed.push({ case: u.case, pr: u.pr, checks, log })
+  }
+  const unmet = verifyOpenChecks(observed)
+  if (unmet.length) {
+    throw new Error(`open pull requests do not show what their cases need: ${unmet.join("; ")}; ` +
+      `this scratch repository is partly built and cannot be resumed: abandon it`)
+  }
+  key.openChecksVerified = true
+  saveKey()
+
   // Comments on the tracking issue, in the drawn order.
   const small = p.open.find((u) => u.case === "honest:small").pr
   const large = p.open.find((u) => u.case === "honest:large").pr
@@ -640,8 +722,13 @@ function main(argv) {
       const v = argv[++i]
       if (!/^\d+$/.test(v ?? "")) throw new Error("--label-delay must be a whole number of seconds")
       args.labelDelay = Number(v)
+    } else if (argv[i] === "--min-label-hours") {
+      const v = argv[++i]
+      if (!/^\d+$/.test(v ?? "")) throw new Error("--min-label-hours must be a whole number of hours, 0 or more")
+      args.minLabelHours = Number(v)
     } else if (argv[i].startsWith("--")) args[argv[i].slice(2)] = argv[++i]
   }
+  const minHours = args.minLabelHours ?? 6
   if (!args.seed) args.seed = String(Math.floor(Math.random() * 2 ** 31))
   if (args["model-a"] || args["model-b"]) {
     throw new Error("--model-a and --model-b are no longer accepted: the models come from the seed")
@@ -651,11 +738,20 @@ function main(argv) {
   console.log(`seed ${p.seed}: ${p.done.length + p.open.length + 1} units, ` +
     (problems.length ? `NOT independent:\n${problems.join("\n")}` : "every case on its own files"))
   if (problems.length) process.exit(1)
-  if (args.dryRun) return
+  if (args.dryRun) {
+    try {
+      const { expiresAt, hoursLeft } = preflightLabel({ date: p.date, minHours })
+      console.log(`the dated label expires at ${expiresAt} (${hoursLeft.toFixed(1)} h left)`)
+    } catch (error) {
+      console.log(`a real build would refuse now: ${error.message}`)
+    }
+    return
+  }
   for (const name of ["dir", "repo", "key-out"]) if (!args[name]) throw new Error(`--${name} is required`)
   const dir = resolve(args.dir)
   const keyOut = resolve(args["key-out"])
   try {
+    preflightLabel({ date: p.date, minHours })
     assertKeyOutside(dir, keyOut)
     apply(p, { dir, repo: args.repo, keyOut, labelDelay: args.labelDelay })
   } catch (error) {
