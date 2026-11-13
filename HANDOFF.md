@@ -45,6 +45,12 @@ the template that a role or a human does not read during a task.
 
 ## Decisions
 
+- **Owner-approved coordinator teams (owner, 2026-11-13)**: prefer the strongest suitable verified-free usable
+  coordinator; otherwise recommend a suitable usable coordinator from the current supervisor provider. Before launch
+  or substitution, ask the owner to approve the concrete team, cost, availability evidence, alternatives, and fallback,
+  then stop and wait. No silent coordinator substitution or inference that unknown pricing is free. Existing
+  qualifications, allow-lists, delegate fallback, and role rights remain unchanged. See `docs/PROVIDERS.md` and the
+  supervisor's project additions.
 - **Roles separated (owner, 2026-11-09)**: the supervisor alone merges or closes a pull request (integration branch
   and `main`), with a merge commit; the coordinator reviews and approves, never merges, closes, pushes to the
   integration branch, or writes product code; the delegate writes. One role per session: whoever merges did not
