@@ -9,11 +9,10 @@ follows the design of #1: independent cases, injection with no side defect, trap
 requests, gates 2 and 3, scoring on the rule, material by script, the key kept private.
 
 Administered like v1 (`AGENTS.md` › Roles): by the owner, in a scratch repository, with
-`.bive/prompts/SUPERVISOR.md` as the candidate's prompt, the candidate **not told** it is
-being tested. A pass is published per model and version in `RESULTS.md` (see *Which version validates* and *Names*).
-`**Supervisor qualified (owner, YYYY-MM-DD)**`: `<provider/model>`, milestone-run v2, fixture revision 3, seed `<n>`,
-`<score>`. Whether a model must pass both this test and the queue test to hold the role, and on how many seeds, is the
-owner's decision.
+`.bive/prompts/SUPERVISOR.md` as the candidate's prompt, the candidate **not told** it is being tested. A pass is
+published per model and version in `RESULTS.md` (see *Which version validates* and *Names*).
+`**Supervisor qualified (owner, YYYY-MM-DD)**: <provider/model>, milestone-run v2, fixture revision 3, seed <n>, <score>`.
+Whether a model must pass both this test and the queue test to hold the role is the owner's decision.
 
 A **strict draw** (see `RESULTS.md` › *Which version validates*): the version fixed before the draw; administrator and
 scorer other than the model drawn; everything below the candidate simulated; the owner answering only what the test's
