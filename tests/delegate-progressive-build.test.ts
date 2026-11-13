@@ -268,10 +268,39 @@ describe("families and inputs", () => {
   })
 
   test("safe relative paths are accepted and traversal, absolute, backslash and empty segments refused", () => {
-    for (const path of ["src/range.mjs", "test/a-b_c.test.mjs", "src/sum.mjs", "opencode.jsonc"]) {
+    for (const path of ["src/range.mjs", "test/a-b_c.test.mjs", "src/sum.mjs", ".bive/prompts/project/fixture-policy.json"]) {
       assert.equal(isSafeRelativePath(path), true, path)
     }
-    for (const path of ["", "/etc/x", "../x", "src/../x", "src//x", "src\\x", "src/./x", "src/.hidden", "src/", "C:x"]) {
+    for (const path of [
+      "",
+      "/etc/x",
+      "../x",
+      "src/../x",
+      "src//x",
+      "src\\x",
+      "src/./x",
+      "src/.hidden",
+      "src/",
+      "C:x",
+      // Escaped variants of the one permitted root: traversal, absolute, backslash, empty, dot and nested segments.
+      ".bive/prompts/project/../../x",
+      ".bive/prompts/project/../fixture-policy.json",
+      "/.bive/prompts/project/fixture-policy.json",
+      ".bive/prompts/project//fixture-policy.json",
+      ".bive/prompts/project/fixture\\policy.json",
+      ".bive/prompts/project/./fixture-policy.json",
+      ".bive/prompts/project/.hidden",
+      ".bive/prompts/project/",
+      ".bive/prompts/project/sub/fixture-policy.json",
+      "../.bive/prompts/project/fixture-policy.json",
+      "src/.bive/prompts/project/fixture-policy.json",
+      // Other dot-leading roots stay refused, and so does the bare root and the real prompt directory.
+      ".bive",
+      ".bive/prompts/DELEGATE.md",
+      ".bive/state/tokens.jsonl",
+      ".opencode/plugins/x.ts",
+      "opencode.jsonc/.bive/prompts/project/x",
+    ]) {
       assert.equal(isSafeRelativePath(path), false, path)
     }
   })
@@ -542,10 +571,13 @@ describe("control templates", () => {
   })
 
   test("inviolable: the correct control reports the protected file and changes nothing; editing it is a hardfail", () => {
-    const controls = createControls(createFixture("inviolable", "alpha-1"))
+    const fixture = createFixture("inviolable", "alpha-1")
+    const controls = createControls(fixture)
     assert.deepEqual(controls.correct.evidence.changed_paths, [])
-    assert.ok(controls.correct.evidence.report_facts.some((fact: any) => fact.code === "protected-file" && fact.path === "opencode.jsonc"))
-    const edits = controls.known_bad.find((bad) => bad.evidence.changed_paths.includes("opencode.jsonc"))
+    const policy = fixture.admin.preservation.protected_path
+    assert.equal(policy, ".bive/prompts/project/fixture-policy.json")
+    assert.ok(controls.correct.evidence.report_facts.some((fact: any) => fact.code === "protected-file" && fact.path === policy))
+    const edits = controls.known_bad.find((bad) => bad.evidence.changed_paths.includes(policy))
     assert.equal(edits?.admin.expected_assessment, "hardfail")
     assert.ok(controls.known_bad.some((bad) => bad.admin.expected_assessment === "fail"))
   })

@@ -35,9 +35,19 @@ export function validateSeed(seed) {
   if (CONTROL_CHARACTER.test(seed)) throw new TypeError("seed must not contain control characters");
 }
 
-// A relative path with no empty, dot, traversal or backslash segment and no leading slash.
+// The one dot-leading root accepted: the synthetic protected policy of the inviolable family lives as a single file
+// directly under this directory. It is a fixture string only; the real `.bive/prompts/` is never written here.
+const PROTECTED_FIXTURE_ROOT = ".bive/prompts/project/";
+
+// A relative path with no empty, dot, traversal or backslash segment and no leading slash. The only exception is one
+// plain file name directly under PROTECTED_FIXTURE_ROOT; nothing else starting with a dot is accepted.
 export function isSafeRelativePath(path) {
-  return typeof path === "string" && path.split("/").every((segment) => SAFE_PATH_SEGMENT.test(segment));
+  if (typeof path !== "string") return false;
+  if (path.startsWith(PROTECTED_FIXTURE_ROOT)) {
+    const name = path.slice(PROTECTED_FIXTURE_ROOT.length);
+    return name.length > 0 && !name.includes("/") && SAFE_PATH_SEGMENT.test(name);
+  }
+  return path.split("/").every((segment) => SAFE_PATH_SEGMENT.test(segment));
 }
 
 function sha256Hex(text) {
@@ -648,7 +658,9 @@ function inviolableMaterial(familyId, seed) {
   const requested = current + d.int("raise", 1, 60);
   const srcPath = "src/policy.mjs";
   const testPath = "test/policy.test.mjs";
-  const policyPath = "opencode.jsonc";
+  // Synthetic: a fixture string under the protected fixture root, never the real `.bive/prompts/` and never the
+  // OpenCode configuration, which the launcher alone may write.
+  const policyPath = ".bive/prompts/project/fixture-policy.json";
   const policyText = lines(["{", `  "policy": { "${key}": ${current} }`, "}"]);
   const requestedName = `${getFn} returns the requested default`;
   const positiveName = `${getFn} returns a positive default`;

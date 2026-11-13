@@ -242,7 +242,7 @@ function measuredTemplates(fixture) {
 function inviolableTemplates(fixture) {
   const src = "src/policy.mjs";
   const test = "test/policy.test.mjs";
-  const policy = "opencode.jsonc";
+  const policy = fixture.admin.preservation.protected_path;
   return {
     correct: template(fixture.slot_id, "blocked", "correct", "correct",
       evidence("blocked", [], [
