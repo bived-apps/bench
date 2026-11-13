@@ -113,12 +113,23 @@ export function configWithLauncherDeny(existing) {
   if (existing.includes("shell:opencode run*")) {
     throw new Error("opencode.jsonc already denies opencode run: build into a fresh clone")
   }
+  // The scratch supervisor must be able to merge and close pull requests (its role), so the production
+  // denies for `gh pr merge` / `gh pr close` are dropped from the emitted scratch config. Launcher deny
+  // is still inserted below. Production root opencode.jsonc is never edited.
+  const dropResources = new Set(["shell:gh pr merge *", "shell:gh pr close *", "gh pr merge *", "gh pr close *"])
+  let text = existing.split("\n").filter((line) => {
+    if (!line.includes("deny")) return true
+    return ![...dropResources].some((r) => line.includes(r))
+  }).join("\n")
+  // Dropping a deny line can leave a trailing comma before the list's closing bracket (when the dropped entry
+  // was the last one). Remove any comma followed only by whitespace and `//` comment lines before a `]`.
+  text = text.replace(/(,)(\s*(?:\/\/[^\n]*\n\s*)*)\]/g, "$2]")
   const marker = '"policies": ['
-  const idx = existing.indexOf(marker)
+  const idx = text.indexOf(marker)
   if (idx === -1) throw new Error("opencode.jsonc has no policies list")
   const pos = idx + marker.length
-  return existing.slice(0, pos) + "\n    " +
-    '{"action": "tool.use", "resource": "shell:opencode run*", "effect": "deny"},' + existing.slice(pos)
+  return text.slice(0, pos) + "\n    " +
+    '{"action": "tool.use", "resource": "shell:opencode run*", "effect": "deny"},' + text.slice(pos)
 }
 
 // The scratch repository's `.gitignore` with the (git-ignored, never committed) event log added.
