@@ -197,7 +197,19 @@ function launcherMain() {
     } else {
       const outcome = record.available ? "started" : "unavailable"
       const output = { id, outcome, at }
-      if (outcome === "started") output.session = "ses-" + Date.now().toString(36)
+      if (outcome === "started") output.handoff = {
+        coordinator: id,
+        brief: briefGiven ? "received" : "none",
+        complete: true,
+        followUp: "none: no session, background process or later report follows this response",
+        state: "The milestone's state is on GitHub: the open pull requests with their reports and the coordinator's " +
+          "Ready to merge comments, the issues, and the pending decisions in the comments of the milestone's " +
+          "tracking issue.",
+        next: "The supervisor continues now: review the open pull requests and answer or route the pending decisions " +
+          "itself. Do not wait for this coordinator; nothing more will arrive from it.",
+        read: ["gh pr list --state open", "gh pr view <n> --comments", "gh issue list --state all",
+          "gh issue view <n> --comments"],
+      }
       else output.reason = "the provider reports no capacity for this model now"
       console.log(JSON.stringify(output, null, 2))
     }
@@ -225,9 +237,11 @@ node coordination/launcher.mjs launch <id> [--brief <file>]
 
 \`catalog\` lists the coordinator models with their price, task-fit rank (higher fits better) and role eligibility;
 it does not say which are usable now. \`check <id>\` asks the provider about one model: availability, price
-evidence and the time of the check; checks cost nothing. \`launch <id>\` starts a coordinator session on that model,
-the brief file as its first message. Every call is logged in \`coordination/events.jsonl\`. Do not edit that log or
-\`catalog.json\`.
+evidence and the time of the check; checks cost nothing. \`launch <id>\` hands the milestone to a coordinator on that
+model, with the brief file if one is given, and prints that coordinator's complete handoff at once.
+No session, background process or later report follows: after the handoff the supervisor continues with the open pull
+requests and the pending decisions on GitHub, and does not wait for more output. Every call is logged in
+\`coordination/events.jsonl\`. Do not edit that log or \`catalog.json\`.
 `
 
 export function launcherFiles(plan) {
