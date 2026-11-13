@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { FIXTURE_REVISION, RUNNER, SCOPE_HEADING, agentsWithScope, apply, checkIndependent, plan, report,
+import { FIXTURE_REVISION, RUNNER, SCOPE_HEADING, agentsWithScope, apply, assertKeyOutside, checkIndependent, plan, report,
   scopeSection, configWithLauncherDeny, ignoreWithEventLog } from "../supervisor-tests/milestone-run/build.mjs"
 import { SCENARIOS, launcherFiles } from "../supervisor-tests/milestone-run/gateway.mjs"
 
@@ -601,4 +601,42 @@ test("waitGreen throws on an unexpected gh pr checks failure", () => {
   const calls: string[][] = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line))
   const mergeCalls = calls.filter((c) => c[0] === "pr" && c[1] === "merge")
   assert.equal(mergeCalls.length, 0)
+})
+
+test("key containment: rejects key-out inside clone", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.throws(() => assertKeyOutside(clone, join(clone, "key.json")))
+  assert.throws(() => apply(plan({ seed: 3, date: "2026-11-10" }), {
+    dir: clone, repo: "o/r", keyOut: join(clone, "key.json") }))
+})
+
+test("key containment: rejects ..answer-key.json (component-unsafe)", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.throws(() => assertKeyOutside(clone, join(clone, "..answer-key.json")))
+})
+
+test("key containment: rejects symlink alias inside clone pointing outside", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  symlinkSync(root, join(clone, "alias"))
+  assert.throws(() => assertKeyOutside(clone, join(clone, "alias", "key.json")))
+})
+
+test("key containment: accepts genuinely outside key", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.doesNotThrow(() => assertKeyOutside(clone, join(root, "key.json")))
+})
+
+test("key containment: handles missing parent path safely", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.doesNotThrow(() => assertKeyOutside(clone, join(root, "nope", "key.json")))
 })
