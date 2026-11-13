@@ -7,7 +7,8 @@ authorization workflow for pull requests targeting an integration branch
 ## Labels
 
 - `bive-merge-authorized-until-YYYY-MM-DD`: the dated authorization label produced
-  by the merge gate. It expires at the end of that UTC date.
+  by the authorization helper/workflow. The merge gate validates it but never
+  writes labels. It expires at the end of that UTC date.
 - `bive-grant-<32 hex>`: a bound grant label scoped to one PR, exact head SHA,
   base branch, and expiry date. It is binding metadata, not a signature or proof
   of a human actor.
@@ -36,8 +37,9 @@ origin, a 15 second timeout, a 2 MiB response cap, and no retries.
 
 The initial commit on this issue, 3467a52a79f5150d8f024da54e60420577b81c62, was
 authored as `delegate opencode-go/beam-free` because only the serving alias was
-supplied to the delegate. Authoritative OpenCode provider metadata was resolved
-later by the owner: `canonical_id` `reflection/beam-1.0-501b-a23b`, name
+supplied to the delegate. Authoritative OpenCode provider metadata was looked up
+by coordinator openai/gpt-6.1-sol at the owner's request: `canonical_id`
+`reflection/beam-1.0-501b-a23b`, name
 `Beam Free`, `release_date` 2026-10-05, `last_updated` 2026-10-16, from
 `https://opencode.ai/zen/go/v1/models` and `https://opencode.ai/zen/v1/models`.
 Subsequent commits use `delegate reflection/beam-1.0-501b-a23b`; the earlier
