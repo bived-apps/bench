@@ -7,7 +7,7 @@ import {
   authorizeMerge,
   GRANT_LABEL_PREFIX,
 } from "../.github/scripts/authorize-merge-lib.mjs"
-import { createGitHubApi } from "../.github/scripts/authorize-merge.mjs"
+import { createGitHubApi, parsePrNumber } from "../.github/scripts/authorize-merge.mjs"
 import { isIntegrationBranch } from "../.github/scripts/merge-gate-lib.mjs"
 
 const REPO = "owner/repo"
@@ -59,7 +59,6 @@ function makePr(overrides = {}) {
 function makeHarness(options = {}) {
   const {
     prLabelsSequence = null,
-    removeLabels = [],
     comments = [{ body: `Ready to merge ${HEAD} coordinator` }],
     runs = [makeRun()],
     runLookup = null,
@@ -107,10 +106,6 @@ function makeHarness(options = {}) {
     }
 
     if (method === "DELETE" && path.startsWith(`/repos/${REPO}/issues/${NUMBER}/labels/`)) {
-      const name = decodeURIComponent(path.split("/").pop())
-      if (removeLabels.includes(name)) {
-        // allow
-      }
       return null
     }
 
@@ -345,6 +340,16 @@ test("authorizeMerge enforces pagination limits", async () => {
   await assert.rejects(authorizeMerge(common(runApi)), /exceeded the 10-page limit/)
 })
 
+test("authorizeMerge rejects malformed pull request label entries", async () => {
+  const api = makeCustomApi({ pr: makePr({ labels: [42] }) })
+  await assert.rejects(authorizeMerge(common(api)), /malformed/)
+})
+
+test("authorizeMerge rejects non-positive-safe-integer run ids", async () => {
+  const api = makeHarness({ runs: [makeRun({ id: 0 })] })
+  await assert.rejects(authorizeMerge(common(api)), /positive safe integer/)
+})
+
 test("authorizeMerge preserves unrelated labels and removes old authorization labels", async () => {
   const oldDated = "bive-merge-authorized-until-2026-11-12"
   const oldGrant = grantFor(NUMBER, HEAD, BASE, "2026-11-12")
@@ -382,10 +387,61 @@ test("authorizeMerge reports cleanup failure alongside primary error", async () 
   await assert.rejects(authorizeMerge(common(wrapped)), /cleanup failed: cleanup boom/)
 })
 
+test("authorizeMerge marks an ambiguous label POST as uncertain and attempts cleanup", async () => {
+  const api = makeHarness({
+    failOn: (m, p) => m === "POST" && p === `/repos/${REPO}/issues/${NUMBER}/labels`,
+  })
+  await assert.rejects(authorizeMerge(common(api)), /forced failure/)
+  const deletes = api.calls.filter((c) => c.method === "DELETE" && c.path.includes("/labels/")).map((c) => decodeURIComponent(c.path.split("/").pop()))
+  assert.ok(deletes.includes(grantFor()))
+})
+
+test("authorizeMerge treats a 404 during grant cleanup as harmless", async () => {
+  const base = makeHarness({
+    failOn: (m, p) => m === "POST" && p.endsWith("/rerun"),
+  })
+  const api = async (method, path, body) => {
+    if (method === "DELETE" && path.endsWith(`/labels/${encodeURIComponent(grantFor())}`)) {
+      throw statusError(404, "already gone")
+    }
+    return base(method, path, body)
+  }
+  const tracked = async (method, path, body) => {
+    const r = await api(method, path, body)
+    tracked.calls.push({ method, path, body })
+    return r
+  }
+  tracked.calls = []
+  let message = ""
+  try {
+    await authorizeMerge(common(tracked))
+  } catch (error) {
+    message = error.message
+  }
+  assert.match(message, /forced failure/)
+  assert.doesNotMatch(message, /cleanup failed/)
+})
+
 test("authorizeMerge re-reads PR after adding and validates effective authorization", async () => {
   // third PR missing grant -> fail
   const api = makeHarness({ prLabelsSequence: [[], [], [datedLabel()]] }) // first, second, third labels
   await assert.rejects(authorizeMerge(common(api)), /bound grant label/)
+})
+
+test("authorizeMerge fails if the UTC day changes before success", async () => {
+  let calls = 0
+  const now = () => {
+    calls++
+    return calls === 1
+      ? Date.parse("2026-11-13T12:00:00.000Z")
+      : Date.parse("2026-11-14T00:00:00.000Z")
+  }
+  const api = makeHarness()
+  await assert.rejects(authorizeMerge({
+    repository: REPO, number: NUMBER, headSha: HEAD, owner: OWNER, actor: OWNER,
+    triggeringActor: OWNER, workflowRef: `${REPO}/.github/workflows/bive-authorize-merge.yml@refs/heads/main`,
+    defaultBranch: "main", api, now,
+  }), /UTC day changed/)
 })
 
 test("authorizeMerge re-reads run before rerun and fails if changed", async () => {
@@ -393,7 +449,7 @@ test("authorizeMerge re-reads run before rerun and fails if changed", async () =
   await assert.rejects(authorizeMerge(common(api)), /PR association changed/)
 })
 
-test("CLI transport handles timeout and invalid JSON", async () => {
+test("CLI transport handles timeout, invalid JSON, oversized and redirect", async () => {
   const originalFetch = globalThis.fetch
   try {
     // timeout
@@ -410,6 +466,35 @@ test("CLI transport handles timeout and invalid JSON", async () => {
     globalThis.fetch = async () => new Response("nope", { status: 404 })
     const api3 = createGitHubApi("token")
     await assert.rejects(api3("GET", "/x"), /status 404/)
+
+    // oversized chunked body
+    const max = 2 * 1024 * 1024
+    globalThis.fetch = async () => new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array(max + 1)); controller.close() },
+    }), { status: 200 })
+    const api4 = createGitHubApi("token")
+    await assert.rejects(api4("GET", "/x"), /exceeded/)
+
+    // body timeout
+    globalThis.fetch = async () => ({
+      ok: true, status: 200, body: {
+        getReader: () => ({ read: async () => { const e = new Error("aborted"); e.name = "AbortError"; throw e }, cancel: async () => {} }),
+      },
+    })
+    const api5 = createGitHubApi("token")
+    await assert.rejects(api5("GET", "/x"), /timed out/)
+
+    // redirect option enforced
+    let seenRedirect
+    globalThis.fetch = async (_url, init) => { seenRedirect = init.redirect; return new Response("{}", { status: 200 }) }
+    const api6 = createGitHubApi("secret-token")
+    await api6("GET", "/x")
+    assert.equal(seenRedirect, "error")
+
+    // token redaction
+    globalThis.fetch = async () => { throw new Error("boom secret-token") }
+    const api7 = createGitHubApi("secret-token")
+    await assert.rejects(api7("GET", "/x"), /boom \[redacted\]/)
   } finally {
     globalThis.fetch = originalFetch
   }
@@ -502,5 +587,9 @@ function makeHarnessWithLabels(initialLabels) {
   return custom
 }
 
-// Need ensure makeHarness used in first happy test workflowRef defaultBranch: contract requires workflowRef exactly with defaultBranch. 
-// In happy test defaultBranch "main", workflowRef uses main. Good. But base integration bived is independent. Fine.
+test("parsePrNumber accepts only canonical positive integer strings", () => {
+  assert.equal(parsePrNumber("70"), 70)
+  for (const value of ["", "0", "01", "+1", " 1", "1 ", "1e2", "1.0", "abc"]) {
+    assert.throws(() => parsePrNumber(value), /canonical|positive/)
+  }
+})

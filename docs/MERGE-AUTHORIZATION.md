@@ -32,6 +32,17 @@ authorization workflow for pull requests targeting an integration branch
 calls the helper through an injected GitHub REST client. It uses a fixed API
 origin, a 15 second timeout, a 2 MiB response cap, and no retries.
 
+## Author identity
+
+The initial commit on this issue, 3467a52a79f5150d8f024da54e60420577b81c62, was
+authored as `delegate opencode-go/beam-free` because only the serving alias was
+supplied to the delegate. Authoritative OpenCode provider metadata was resolved
+later by the owner: `canonical_id` `reflection/beam-1.0-501b-a23b`, name
+`Beam Free`, `release_date` 2026-10-05, `last_updated` 2026-10-16, from
+`https://opencode.ai/zen/go/v1/models` and `https://opencode.ai/zen/v1/models`.
+Subsequent commits use `delegate reflection/beam-1.0-501b-a23b`; the earlier
+commit is not rewritten.
+
 ## Fail-closed rules
 
 Bad inputs, malformed API data, pagination exhaustion, missing or stale hand-over

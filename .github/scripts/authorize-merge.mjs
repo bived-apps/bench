@@ -21,7 +21,48 @@ export function createGitHubApi(token) {
         },
         body: body === undefined ? undefined : JSON.stringify(body),
         signal: AbortSignal.timeout(TIMEOUT_MS),
+        redirect: "error",
       })
+    } catch (error) {
+      if (error && (error.name === "AbortError" || error.name === "TimeoutError")) {
+        throw new Error(`GitHub API request timed out after ${TIMEOUT_MS} ms`)
+      }
+      throw new Error(redactToken(error?.message || "GitHub API request failed", token))
+    }
+
+    if (!response.ok) {
+      const error = new Error(`GitHub API ${method} ${requestPath} failed with status ${response.status}`)
+      error.status = response.status
+      throw error
+    }
+
+    if (!response.body) {
+      const text = await response.text()
+      if (text.length > MAX_RESPONSE_BYTES) throw new Error(`GitHub API response exceeded ${MAX_RESPONSE_BYTES} bytes`)
+      if (text === "") return null
+      try {
+        return JSON.parse(text)
+      } catch {
+        const parseError = new Error(`GitHub API returned invalid JSON for ${method} ${requestPath}`)
+        parseError.status = response.status
+        throw parseError
+      }
+    }
+
+    const reader = response.body.getReader()
+    const chunks = []
+    let total = 0
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        total += value.byteLength
+        if (total > MAX_RESPONSE_BYTES) {
+          await reader.cancel()
+          throw new Error(`GitHub API response exceeded ${MAX_RESPONSE_BYTES} bytes`)
+        }
+        chunks.push(value)
+      }
     } catch (error) {
       if (error && (error.name === "AbortError" || error.name === "TimeoutError")) {
         throw new Error(`GitHub API request timed out after ${TIMEOUT_MS} ms`)
@@ -29,21 +70,17 @@ export function createGitHubApi(token) {
       throw error
     }
 
-    const buffer = await response.arrayBuffer()
-    if (buffer.byteLength > MAX_RESPONSE_BYTES) {
-      throw new Error(`GitHub API response exceeded ${MAX_RESPONSE_BYTES} bytes`)
+    const buffer = new Uint8Array(total)
+    let offset = 0
+    for (const chunk of chunks) {
+      buffer.set(chunk, offset)
+      offset += chunk.byteLength
     }
     const text = new TextDecoder().decode(buffer)
-
-    if (!response.ok) {
-      const error = new Error(`GitHub API ${method} ${requestPath} failed with status ${response.status}`)
-      error.status = response.status
-      throw error
-    }
     if (text === "") return null
     try {
       return JSON.parse(text)
-    } catch (error) {
+    } catch {
       const parseError = new Error(`GitHub API returned invalid JSON for ${method} ${requestPath}`)
       parseError.status = response.status
       throw parseError
@@ -51,14 +88,23 @@ export function createGitHubApi(token) {
   }
 }
 
-// Backwards/alternate names for tests that import the transport under a different name.
-export const createApi = createGitHubApi
-export const githubApi = createGitHubApi
-export const makeApi = createGitHubApi
-export const request = createGitHubApi
-export const fetchGitHub = createGitHubApi
-export const transport = createGitHubApi
-export const createTransport = createGitHubApi
+function redactToken(message, token) {
+  if (!token) return message
+  return String(message).split(token).join("[redacted]")
+}
+
+// Only the canonical transport factory is exported.
+
+export function parsePrNumber(value) {
+  if (typeof value !== "string" || !/^[1-9][0-9]*$/.test(value)) {
+    throw new Error("BIVE_PR_NUMBER must be a canonical positive integer string")
+  }
+  const number = Number(value)
+  if (!Number.isSafeInteger(number) || number <= 0) {
+    throw new Error("BIVE_PR_NUMBER must be a positive safe integer")
+  }
+  return number
+}
 
 export async function main() {
   const env = process.env
@@ -77,8 +123,7 @@ export async function main() {
     if (!env[name]) throw new Error(`missing required environment variable ${name}`)
   }
 
-  const number = Number(env.BIVE_PR_NUMBER)
-  if (!Number.isInteger(number) || number <= 0) throw new Error("BIVE_PR_NUMBER must be a positive integer")
+  const number = parsePrNumber(env.BIVE_PR_NUMBER)
 
   const api = createGitHubApi(env.GH_TOKEN)
   const result = await authorizeMerge({
@@ -91,7 +136,7 @@ export async function main() {
     workflowRef: env.GITHUB_WORKFLOW_REF,
     defaultBranch: env.BIVE_DEFAULT_BRANCH,
     api,
-    now: Date.now(),
+    now: Date.now,
   })
   console.log(JSON.stringify(result))
 }

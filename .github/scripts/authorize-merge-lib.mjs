@@ -26,6 +26,24 @@ function utcDateFromMs(ms) {
   return new Date(ms).toISOString().slice(0, 10)
 }
 
+function reevaluateNow(now, date, fallbackMs) {
+  const nowMs = typeof now === "function" ? now() : fallbackMs
+  if (typeof nowMs !== "number" || !Number.isFinite(nowMs)) throw new Error("now must be epoch milliseconds")
+  if (utcDateFromMs(nowMs) !== date) throw new Error("UTC day changed during authorization")
+  const expiresAt = Date.parse(`${date}T23:59:59.999Z`)
+  if (nowMs > expiresAt) throw new Error("merge authorization has expired")
+  return nowMs
+}
+
+function prLabels(pr) {
+  if (!Array.isArray(pr.labels)) throw new Error("pull request labels must be an array")
+  return pr.labels.map((label) => {
+    if (typeof label === "string") return label
+    if (label && typeof label === "object" && !Array.isArray(label) && typeof label.name === "string") return label.name
+    throw new Error("pull request label is malformed")
+  })
+}
+
 function errorStatus(error) {
   if (error && typeof error === "object") {
     if (typeof error.status === "number") return error.status
@@ -186,7 +204,7 @@ function runMatchesPr(run, number, headSha, baseRef) {
 
 function validateRunShape(run) {
   if (!run || typeof run !== "object" || Array.isArray(run)) throw new Error("workflow run must be an object")
-  if (typeof run.id !== "number" && typeof run.id !== "string") throw new Error("workflow run is missing id")
+  if (typeof run.id !== "number" || !Number.isSafeInteger(run.id) || run.id <= 0) throw new Error("workflow run id must be a positive safe integer")
   if (run.status !== "completed") throw new Error("workflow run is not completed")
   if (run.path !== ".github/workflows/bive-merge-gate.yml") throw new Error("workflow run path is invalid")
   if (run.event !== "pull_request_target") throw new Error("workflow run event is invalid")
@@ -195,7 +213,9 @@ function validateRunShape(run) {
 }
 
 export async function authorizeMerge({ repository, number, headSha, owner, actor, triggeringActor, workflowRef, defaultBranch, api, now = Date.now() } = {}) {
-  const { nowMs } = validateCommon({ repository, number, headSha, owner, actor, triggeringActor, workflowRef, defaultBranch, api, now })
+  const { nowMs: initialNowMs } = validateCommon({ repository, number, headSha, owner, actor, triggeringActor, workflowRef, defaultBranch, api, now })
+  let currentNowMs = initialNowMs
+  const date = utcDateFromMs(currentNowMs)
 
   let labelsAdded = false
   let grantLabelForCleanup = null
@@ -228,9 +248,9 @@ export async function authorizeMerge({ repository, number, headSha, owner, actor
     const second = validatePrShape(secondPrRaw, repository, { expectedHeadSha: headSha, expectedBaseRef: baseRef })
     const secondSnapshot = prSnapshot(secondPrRaw)
     if (!snapshotsEqual(initialSnapshot, secondSnapshot)) throw new Error("pull request changed before authorization")
+    currentNowMs = reevaluateNow(now, date, currentNowMs)
 
     // Compute labels
-    const date = utcDateFromMs(nowMs)
     const datedLabel = `${DATED_LABEL_PREFIX}${date}`
     const grantLabel = boundGrantLabel({ number, headSha, baseRef, date })
     grantLabelForCleanup = grantLabel
@@ -246,22 +266,24 @@ export async function authorizeMerge({ repository, number, headSha, owner, actor
     }
 
     // Remove existing dated/grant labels individually
-    const currentLabels = Array.isArray(secondPrRaw.labels) ? secondPrRaw.labels.map((l) => (typeof l === "string" ? l : l?.name)).filter((l) => typeof l === "string") : []
+    const currentLabels = prLabels(secondPrRaw)
     const toRemove = currentLabels.filter((label) => label.startsWith(DATED_LABEL_PREFIX) || label.startsWith(GRANT_LABEL_PREFIX))
     for (const label of toRemove) {
       await api("DELETE", `/repos/${repository}/issues/${number}/labels/${encodeURIComponent(label)}`)
     }
 
-    // Add both together
-    await api("POST", `/repos/${repository}/issues/${number}/labels`, { labels: [datedLabel, grantLabel] })
+    // Add both together. Mark the write as uncertain before awaiting it, because
+    // the server may apply it even when the transport later reports a timeout.
     labelsAdded = true
+    await api("POST", `/repos/${repository}/issues/${number}/labels`, { labels: [datedLabel, grantLabel] })
 
     // Re-read PR after adding
     const thirdPrRaw = await api("GET", `/repos/${repository}/pulls/${number}`)
     const third = validatePrShape(thirdPrRaw, repository, { expectedHeadSha: headSha, expectedBaseRef: baseRef, expectedState: "open" })
     if (third.draft) throw new Error("pull request must not be a draft")
-    const thirdLabels = Array.isArray(thirdPrRaw.labels) ? thirdPrRaw.labels.map((l) => (typeof l === "string" ? l : l?.name)).filter((l) => typeof l === "string") : []
-    const effective = validateBoundAuthorization({ number, headSha: third.headSha, baseRef: third.baseRef, labels: thirdLabels, now: nowMs })
+    const thirdLabels = prLabels(thirdPrRaw)
+    currentNowMs = reevaluateNow(now, date, currentNowMs)
+    const effective = validateBoundAuthorization({ number, headSha: third.headSha, baseRef: third.baseRef, labels: thirdLabels, now: currentNowMs })
     if (!effective.ok) throw new Error(effective.reason)
 
     // Re-read chosen run
@@ -290,7 +312,9 @@ export async function authorizeMerge({ repository, number, headSha, owner, actor
       try {
         await api("DELETE", `/repos/${repository}/issues/${number}/labels/${encodeURIComponent(grantLabelForCleanup)}`)
       } catch (cleanupError) {
-        throw new Error(`${error.message}; cleanup failed: ${cleanupError.message}`, { cause: error })
+        if (errorStatus(cleanupError) !== 404) {
+          throw new Error(`${error.message}; cleanup failed: ${cleanupError.message}`, { cause: error })
+        }
       }
     }
     throw error
