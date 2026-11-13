@@ -1,0 +1,17 @@
+{
+  "name": "bench-progressive-delegate-tooling",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Lint tooling and offline fixture generation (all eleven families, with control templates) for the progressive delegate benchmark; no scorer, launcher or ledger yet.",
+  "type": "module",
+  "engines": {
+    "node": "^22.13.0 || >=24"
+  },
+  "scripts": {
+    "lint": "eslint --max-warnings 0 .",
+    "lint:smoke": "node lint-smoke.mjs"
+  },
+  "devDependencies": {
+    "eslint": "10.14.0"
+  }
+}
