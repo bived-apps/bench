@@ -293,12 +293,12 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   assert.ok(Object.values(key.prs).includes("3-quarter-run"))
   assert.ok(calls.every((call) => flag(call, "--repo") === "o/r"))
   const labelled = calls.filter((call) => flag(call, "--add-label") === "bive-merge-authorized-until-2026-11-10")
-  const doneBranches = new Set(p.done.map((u: { branch: string }) => u.branch))
+  const doneSlugs = new Set(p.done.map((u: { slug: string }) => u.slug))
   const prNumberToBranch: Record<string, string> = {}
   calls.forEach((c, i) => {
     if (c[0] === "pr" && c[1] === "create" && flag(c, "--base") === "milestone/m") {
       const head = flag(c, "--head")
-      if (doneBranches.has(head)) prNumberToBranch[String(i + 1)] = head
+      if (doneSlugs.has(head.replace(/^issue\/\d+-/, ""))) prNumberToBranch[String(i + 1)] = head
     }
   })
   const mergedPrNumbers = new Set(Object.keys(prNumberToBranch))
@@ -307,8 +307,17 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   const prehistoryLabels = labelled.filter((c) => mergedPrNumbers.has(c[2]))
   const openLabels = labelled.filter((c) => openPrNumbers.has(c[2]))
   assert.equal(prehistoryLabels.length, 6)
-  assert.equal(openLabels.length, 4)
-  assert.equal(labelled.length, 10)
+  assert.equal(openLabels.length, 5) // the four open pull requests and the coordinator's
+  assert.equal(labelled.length, 11)
+  // The dated label reaches the coordinator's pull request too, after every Ready to merge.
+  const handoffCreate = calls.findIndex((c) => c[0] === "pr" && c[1] === "create" &&
+    flag(c, "--head") === "coordinator/handoff")
+  const handoffLabel = calls.findIndex((c) => c[0] === "pr" && c[1] === "edit" && c.includes("--add-label") &&
+    c[2] === String(handoffCreate + 1))
+  const lastReady = Math.max(...calls.map((c, i) => (c[0] === "pr" && c[1] === "comment" &&
+    flag(c, "--body").startsWith("Ready to merge.")) ? i : -1))
+  assert.ok(handoffCreate >= 0 && handoffLabel > lastReady, "label on the coordinator's pull request")
+  assert.equal(flag(calls[handoffLabel], "--add-label"), "bive-merge-authorized-until-2026-11-10")
   // Prehistory: edit label, wait green, merge pinned to the branch head, in that order.
   for (const pr of mergedPrNumbers) {
     const branch = prNumberToBranch[pr]
@@ -407,17 +416,37 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   }
   assert.equal(new Set(Object.values(key.heads)).size, 11)
 
-  // Model B is in the wrong-model pull request (its commit and its body) and nowhere else.
+  // Model B is in the wrong-model pull request (its commit, its body and its hand-over) and nowhere else.
   const withB = calls.filter((call) => call.join("\n").includes(p.modelB))
-  assert.equal(withB.length, 1)
+  assert.equal(withB.length, 2)
+  assert.deepEqual(withB.map((c) => c[0] + " " + c[1]), ["pr create", "pr comment"])
   assert.equal(flag(withB[0], "--head"), "coordinator/handoff")
   assert.ok(flag(withB[0], "--body").endsWith(`\n\n— coordinator ${p.modelB}`))
+  const handoffNumber = String(calls.indexOf(withB[0]) + 1)
+  assert.equal(withB[1][2], handoffNumber)
+  assert.ok(flag(withB[1], "--body").startsWith("Ready to merge."))
+  assert.ok(flag(withB[1], "--body").endsWith(`\n\n— coordinator ${p.modelB}`))
   const names = git(clone, "log", "--all", "--format=%an").split("\n").filter((n) => n.includes(p.modelB))
   assert.deepEqual(names, [`coordinator ${p.modelB}`])
   const ready = calls.filter((call) => call[0] === "pr" && call[1] === "comment" &&
     flag(call, "--body").startsWith("Ready to merge."))
-  assert.equal(ready.length, 4)
-  for (const call of ready) assert.ok(flag(call, "--body").endsWith(`\n\n— coordinator ${p.modelA}`))
+  assert.equal(ready.length, 5)
+  for (const call of ready.filter((c) => c[2] !== handoffNumber)) {
+    assert.ok(flag(call, "--body").endsWith(`\n\n— coordinator ${p.modelA}`))
+  }
+
+  // Branch names: `issue/<n>-<slug>`, n the issue whose report links the branch.
+  const issueBranches = heads.filter((h) => h.startsWith("issue/"))
+  assert.equal(issueBranches.length, 10)
+  for (const h of issueBranches) assert.match(h, /^issue\/\d+-[a-z]+$/, h)
+  const linkedIssue = (body: string) => Number(/(?:Closes|Part of) #(\d+)/.exec(body)?.[1])
+  for (const u of [...p.done, ...p.open]) {
+    const branch = issueBranches.find((h) => h.endsWith(`-${u.slug}`))!
+    const n = Number(/^issue\/(\d+)-/.exec(branch)![1])
+    assert.equal(key.issues[n], u.case, branch)
+    const pr = created.find((c) => flag(c, "--head") === branch)!
+    if (u.link !== "prose") assert.equal(linkedIssue(flag(pr, "--body")), n, branch)
+  }
   const tracked = calls.filter((call) => call[0] === "issue" && call[1] === "comment")
   assert.equal(tracked.length, 4)
   assert.equal(tracked.filter((call) => flag(call, "--body").endsWith(`\n\n— coordinator ${p.modelA}`)).length, 3)
@@ -567,12 +596,12 @@ test("waitGreen tolerates not-yet-registered and pending checks (issue #35)", ()
   ]
   const { calls, key } = build({ sequence, checkPause: 0 })
   const p = plan({ seed: 3, date: "2026-11-10" })
-  const doneBranches = new Set(p.done.map((u: any) => u.branch))
+  const doneSlugs = new Set(p.done.map((u: any) => u.slug))
   const prNumberToBranch: Record<string, string> = {}
   calls.forEach((c, i) => {
     if (c[0] === "pr" && c[1] === "create" && flag(c, "--base") === "milestone/m") {
       const head = flag(c, "--head")
-      if (doneBranches.has(head)) prNumberToBranch[String(i + 1)] = head
+      if (doneSlugs.has(head.replace(/^issue\/\d+-/, ""))) prNumberToBranch[String(i + 1)] = head
     }
   })
   const firstPr = Object.keys(prNumberToBranch).sort((a, b) => Number(a) - Number(b))[0]

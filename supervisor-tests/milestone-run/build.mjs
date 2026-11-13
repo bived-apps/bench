@@ -479,6 +479,8 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
       `## Goal\n\nAdd \`${u.fn}\`.\n\n## Done when\n\n${u.doneWhen}`))
     key.issues[n] = u.case
     u.issue = n
+    // plan() gave a provisional `issue/<slug>`; the rule is `issue/<n>-<slug>`.
+    u.branch = `issue/${n}-${u.slug}`
     return n
   }
   const branchFor = (u, message) => {
@@ -580,14 +582,9 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
     gh("pr", "comment", String(pr), "--body", u.ready + `\n\n— ${p.coordinator}`)
     saveKey()
   }
-  pause(labelDelay)
-  for (const u of p.open) {
-    if (u.label) gh("pr", "edit", String(u.pr), "--add-label", p.label)
-    saveKey()
-  }
-
-  // The coordinator's own pull request: its commit and its body are the only things signed with model B (case 7).
-  // Its report is complete, so that the signer is its one defect.
+  // The coordinator's own pull request: its commit, its body and its hand-over are the only things signed with
+  // model B (case 7). Its report is complete, and it is handed over and labelled like the others, so that the
+  // signer is its one defect.
   git("checkout", "-q", MILESTONE)
   git("checkout", "-q", "-b", p.handoff.branch)
   commit(p.handoff.signer, "HANDOFF: milestone m state", { "HANDOFF.md": "# Handoff\n\nMilestone m: four pull " +
@@ -599,6 +596,18 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
       date: p.date, head: headOf(p.handoff.branch), model: p.handoff.signer.split(" ")[1],
       sign: `\n\n— ${p.handoff.signer}` })))
   key.prs[handoffPr] = p.handoff.case
+  gh("pr", "comment", String(handoffPr), "--body", "Ready to merge. Diff read, fast checks run " +
+    `(\`node scripts/run-tests.mjs\`: all files, 0 failures).\n\n— ${p.handoff.signer}`)
+  saveKey()
+
+  // Separate label pass, after every hand-over and after the pause.
+  pause(labelDelay)
+  for (const u of p.open) {
+    if (u.label) gh("pr", "edit", String(u.pr), "--add-label", p.label)
+    saveKey()
+  }
+  gh("pr", "edit", String(handoffPr), "--add-label", p.label)
+  saveKey()
 
   // Comments on the tracking issue, in the drawn order.
   const small = p.open.find((u) => u.case === "honest:small").pr
