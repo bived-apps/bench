@@ -325,15 +325,22 @@ export function within(root, path) {
   return rel === "" || (rel !== ".." && !rel.startsWith(".." + sep) && !isAbsolute(rel))
 }
 
-// Component-unsafe: a path component that contains ".." but is not exactly ".."
-// (e.g. "..answer-key.json", "foo.."), or an empty/dot component.
-function unsafeComponents(rel) {
-  if (isAbsolute(rel)) return true
-  for (const part of rel.split(sep)) {
-    if (part === "" || part === ".") return true
-    if (part.includes("..") && part !== "..") return true
+// Resolve a path whose trailing components may not exist yet: realpathSync the nearest existing ancestor, then
+// re-append the missing components. Any error from realpathSync other than ENOENT is rethrown.
+function realpathMissing(path) {
+  const missing = []
+  let current = path
+  while (true) {
+    try {
+      return join(realpathSync(current), ...missing)
+    } catch (error) {
+      if (!error || error.code !== "ENOENT") throw error
+      const parent = dirname(current)
+      if (parent === current) throw error
+      missing.unshift(basename(current))
+      current = parent
+    }
   }
-  return false
 }
 
 export function assertKeyOutside(dir, keyOut) {
@@ -341,20 +348,9 @@ export function assertKeyOutside(dir, keyOut) {
   const dirReal = realpathSync(dirLex)
   if (!statSync(dirReal).isDirectory()) throw new Error("--dir must be an existing directory")
   const key = resolve(keyOut)
-  let realKey = key
-  try {
-    realKey = join(realpathSync(dirname(key)), basename(key))
-  } catch (error) {
-    if (error && error.code !== "ENOENT") throw error
-    // Parent missing: resolve only, no crash.
-    realKey = key
-  }
+  const realKey = join(realpathMissing(dirname(key)), basename(key))
   // Unresolved (lexical) view catches aliases/inside by name; resolved view catches symlinks.
   if (within(dirLex, key) || within(dirReal, realKey)) {
-    throw new Error("--key-out must lie outside the clone")
-  }
-  const relUnresolved = relative(dirLex, keyOut)
-  if (unsafeComponents(relUnresolved)) {
     throw new Error("--key-out must lie outside the clone")
   }
   if (isAbsolute(relative(dirLex, key)) || isAbsolute(relative(dirReal, realKey))) {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
@@ -639,4 +639,58 @@ test("key containment: handles missing parent path safely", () => {
   const clone = join(root, "clone")
   mkdirSync(clone)
   assert.doesNotThrow(() => assertKeyOutside(clone, join(root, "nope", "key.json")))
+})
+
+test("key containment: rejects symlink outside clone pointing into clone (missing parent)", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const link = join(root, "link")
+  symlinkSync(clone, link)
+  assert.throws(() => assertKeyOutside(clone, join(link, "newdir", "key.json")))
+})
+
+test("key containment: rejects symlink outside clone with two missing levels", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const link = join(root, "link")
+  symlinkSync(clone, link)
+  assert.throws(() => assertKeyOutside(clone, join(link, "a", "b", "key.json")))
+})
+
+test("key containment: apply throws before gh/git and creates no newdir", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const link = join(root, "link")
+  symlinkSync(clone, link)
+  let thrown: Error | null = null
+  try {
+    apply(plan({ seed: 3, date: "2026-11-10" }), {
+      dir: clone, repo: "o/r", keyOut: join(link, "newdir", "key.json") })
+  } catch (e) {
+    thrown = e as Error
+  }
+  assert.ok(thrown, "expected apply to throw")
+  assert.match(thrown!.message, /--key-out must lie outside the clone/)
+  assert.ok(!existsSync(join(clone, "newdir")), "newdir must not be created inside clone")
+})
+
+test("key containment: accepts outside folder whose name contains two dots", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const outside = join(root, "my..keys")
+  mkdirSync(outside)
+  assert.doesNotThrow(() => assertKeyOutside(clone, join(outside, "key.json")))
+  // missing parent too
+  assert.doesNotThrow(() => assertKeyOutside(clone, join(root, "my..keys2", "key.json")))
+})
+
+test("key containment: ..answer-key.json directly inside clone still throws", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.throws(() => assertKeyOutside(clone, join(clone, "..answer-key.json")))
 })
