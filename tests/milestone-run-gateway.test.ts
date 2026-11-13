@@ -171,7 +171,7 @@ test("a launch without any prior check is accepted and logged; the launcher does
   const launch = JSON.parse(launchResult.stdout)
   assert.equal(launch.outcome, "started")
   assert.equal(launch.handoff.brief, "none")
-  const events = readFileSync(join(coord, "events.jsonl"), "utf8").trim().split("\\n").filter(Boolean)
+  const events = readFileSync(join(coord, "events.jsonl"), "utf8").trim().split("\n").filter(Boolean)
     .map((line) => JSON.parse(line))
   assert.equal(events.length, 1)
   const e = events[0]
