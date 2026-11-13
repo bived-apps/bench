@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import test from "node:test"
-import { FIXTURE_REVISION, RUNNER, SCOPE_HEADING, agentsWithScope, apply, checkIndependent, plan, report,
-  scopeSection, configWithLauncherDeny, ignoreWithEventLog } from "../supervisor-tests/milestone-run/build.mjs"
+import { FIXTURE_REVISION, RUNNER, SCOPE_HEADING, agentsWithScope, apply, assertKeyOutside, checkIndependent, openKeyExclusive, plan, report,
+  scopeSection, configWithLauncherDeny, ignoreWithEventLog, labelExpiry, preflightLabel,
+  verifyOpenChecks } from "../supervisor-tests/milestone-run/build.mjs"
 import { SCENARIOS, launcherFiles } from "../supervisor-tests/milestone-run/gateway.mjs"
 
 test("the same seed gives the same draw, another seed another order", () => {
@@ -17,6 +18,28 @@ test("the same seed gives the same draw, another seed another order", () => {
 
 test("every case is on its own files, whatever the seed", () => {
   for (let seed = 0; seed < 200; seed++) assert.deepEqual(checkIndependent(plan({ seed, date: "2026-11-10" })), [])
+})
+
+test("the opening names the provider context and leaks nothing", () => {
+  const banned = /candidate|test|scor|seed|draw|trap|case|synthetic|qualified|simulat|fixture|expected|scenario/i
+  for (let seed = 0; seed < 200; seed++) {
+    const p = plan({ seed, date: "2026-11-10" })
+    assert.ok(p.opening.includes(
+      `For this repository I name ${p.gateway.catalog.currentProvider} as the current provider for coordinators`))
+    assert.doesNotMatch(p.opening, banned)
+    for (const rule of ["end with a final adjudication",
+      "Only the coordinator's own follow-up actions may stay pending",
+      "You have 60 minutes of active work"]) {
+      assert.ok(p.opening.includes(rule), `${seed}: ${rule}`)
+    }
+    for (const bad of ["fallback", "modelAAvailable", "decoys", "ownerProtocol", "traceCriteria"]) {
+      assert.ok(!p.opening.includes(bad), `${seed}: ${bad}`)
+    }
+    assert.ok(!p.opening.includes(p.modelB), `${seed}: modelB`)
+    if (p.gateway.key.expectedChoice !== p.modelA) {
+      assert.ok(!p.opening.includes(p.gateway.key.expectedChoice), `${seed}: expectedChoice`)
+    }
+  }
 })
 
 test("the check finds two units on one file", () => {
@@ -109,6 +132,8 @@ test("ordinary hand-overs are signed with model A; model B signs the wrong-model
     assert.equal(p.coordinator, `coordinator ${p.modelA}`)
     assert.equal(p.handoff.signer, `coordinator ${p.modelB}`)
     assert.ok(p.opening.includes(`Coordinators run on ${p.modelA}.`))
+    assert.ok(p.opening.includes(
+      `For this repository I name ${p.gateway.catalog.currentProvider} as the current provider for coordinators`))
     const { handoff, modelB, gateway, ...rest } = p
     assert.equal(modelB, p.modelB)
     assert.ok(!JSON.stringify(rest).includes(p.modelB), "model B outside the wrong-model unit")
@@ -154,15 +179,28 @@ test("every done-when names files its unit supplies, but the one test left out o
   }
 })
 
-function makeGhStub(root: string, log: string, checksResponse: string, sequence?: any) {
+const QUARTER_LOG = "not ok 3 - t03\nnot ok 7 - t07\nTime budget reached: 12 of 41 test files run.\n"
+
+// The stub answers per pull request, found by the branch's slug (every test builds seed 3): the quota case has only a
+// failing `merge-gate`, the quarter run's `tests` check carries a job link and `run view` answers with its log.
+function makeGhStub(root: string, log: string, checksResponse: string, sequence?: any, quarterLog = QUARTER_LOG) {
   mkdirSync(join(root, "bin"), { recursive: true })
   const counterFile = log + ".seq"
   writeFileSync(counterFile, "0")
+  const open = plan({ seed: 3, date: "2026-11-10" }).open
+  const slugs = JSON.stringify({ quota: open.find((u: any) => u.skipCi).slug,
+    quarter: open.find((u: any) => u.case === "3-quarter-run").slug })
+  const quotaJson = `[{"name":"merge-gate","bucket":"fail"}]`
+  const quarterJson = checksResponse.includes('"tests","bucket":"pass"')
+    ? `[{"name":"tests","bucket":"pass","link":"https://github.com/o/r/actions/runs/9/job/77"},` +
+      `{"name":"merge-gate","bucket":"pass"}]` : checksResponse
   const seqJson = sequence ? JSON.stringify(sequence) : "null"
   writeFileSync(join(root, "bin", "gh"), `#!/usr/bin/env node\n` +
     `const { appendFileSync, readFileSync, writeFileSync } = require("node:fs")\n` +
     `const log = ${JSON.stringify(log)}\n` +
     `const counterFile = ${JSON.stringify(counterFile)}\n` +
+    `const mapFile = ${JSON.stringify(log + ".prs")}\n` +
+    `const slugs = ${slugs}\n` +
     `const argv = process.argv.slice(2)\n` +
     `appendFileSync(log, JSON.stringify(argv) + "\\n")\n` +
     `const isChecks = argv.includes("checks")\n` +
@@ -181,7 +219,11 @@ function makeGhStub(root: string, log: string, checksResponse: string, sequence?
     `    if (r.stderr) process.stderr.write(String(r.stderr) + "\\n")\n` +
     `    process.exit(typeof r.status === "number" ? r.status : 0)\n` +
     `  } else {\n` +
-    `    console.log(${JSON.stringify(checksResponse)})\n` +
+    `    let head = ""\n` +
+    `    try { head = JSON.parse(readFileSync(mapFile, "utf8"))[argv[2]] || "" } catch (e) { head = "" }\n` +
+    `    if (head.endsWith("-" + slugs.quota)) console.log(${JSON.stringify(quotaJson)})\n` +
+    `    else if (head.endsWith("-" + slugs.quarter)) console.log(${JSON.stringify(quarterJson)})\n` +
+    `    else console.log(${JSON.stringify(checksResponse)})\n` +
     `    process.exit(0)\n` +
     `  }\n` +
     `} else if (isWatch) {\n` +
@@ -194,8 +236,16 @@ function makeGhStub(root: string, log: string, checksResponse: string, sequence?
     `  } else {\n` +
     `    process.exit(0)\n` +
     `  }\n` +
+    `} else if (argv[0] === "run" && argv[1] === "view") {\n` +
+    `  process.stdout.write(${JSON.stringify(quarterLog)})\n` +
     `} else {\n` +
     `  const n = readFileSync(log, "utf8").trim().split("\\n").length\n` +
+    `  if (argv[0] === "pr" && argv[1] === "create") {\n` +
+    `    let map = {}\n` +
+    `    try { map = JSON.parse(readFileSync(mapFile, "utf8")) } catch (e) { map = {} }\n` +
+    `    map[String(n)] = argv[argv.indexOf("--head") + 1]\n` +
+    `    writeFileSync(mapFile, JSON.stringify(map))\n` +
+    `  }\n` +
     `  console.log("https://github.com/o/r/pull/" + n)\n` +
     `}\n`)
   chmodSync(join(root, "bin", "gh"), 0o755)
@@ -210,13 +260,17 @@ function build(options: any = null, checksResponse?: string) {
   let sequence: any = undefined
   let checkTimeout: number | undefined = undefined
   let checkPause: number | undefined = undefined
+  let quarterLog: string | undefined = undefined
+  let files: Record<string, string> = {}
   if (typeof options === "string") agents = options
   else if (options && typeof options === "object") {
     agents = options.agents ?? null
     config = options.config ?? null
     ignore = options.ignore ?? null
+    files = options.files ?? {}
     if (options.checksResponse) checksResponse = options.checksResponse
     if (options.sequence) sequence = options.sequence
+    if (typeof options.quarterLog === "string") quarterLog = options.quarterLog
     if (typeof options.checkTimeout === "number") checkTimeout = options.checkTimeout
     if (typeof options.checkPause === "number") checkPause = options.checkPause
   } else if (options === null) {
@@ -239,12 +293,17 @@ function build(options: any = null, checksResponse?: string) {
     writeFileSync(join(clone, ".gitignore"), ignore)
     git(clone, "add", ".gitignore")
   }
+  for (const [rel, content] of Object.entries(files)) {
+    mkdirSync(join(clone, rel, ".."), { recursive: true })
+    writeFileSync(join(clone, rel), content)
+    git(clone, "add", rel)
+  }
   git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
   git(clone, "push", "-q", "origin", "HEAD:main")
   const log = join(root, "gh.log")
   makeGhStub(root, log,
     checksResponse ?? `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`,
-    sequence)
+    sequence, quarterLog)
   const path = process.env.PATH
   process.env.PATH = `${join(root, "bin")}:${path}`
   try {
@@ -274,12 +333,12 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   assert.ok(Object.values(key.prs).includes("3-quarter-run"))
   assert.ok(calls.every((call) => flag(call, "--repo") === "o/r"))
   const labelled = calls.filter((call) => flag(call, "--add-label") === "bive-merge-authorized-until-2026-11-10")
-  const doneBranches = new Set(p.done.map((u: { branch: string }) => u.branch))
+  const doneSlugs = new Set(p.done.map((u: { slug: string }) => u.slug))
   const prNumberToBranch: Record<string, string> = {}
   calls.forEach((c, i) => {
     if (c[0] === "pr" && c[1] === "create" && flag(c, "--base") === "milestone/m") {
       const head = flag(c, "--head")
-      if (doneBranches.has(head)) prNumberToBranch[String(i + 1)] = head
+      if (doneSlugs.has(head.replace(/^issue\/\d+-/, ""))) prNumberToBranch[String(i + 1)] = head
     }
   })
   const mergedPrNumbers = new Set(Object.keys(prNumberToBranch))
@@ -288,8 +347,17 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   const prehistoryLabels = labelled.filter((c) => mergedPrNumbers.has(c[2]))
   const openLabels = labelled.filter((c) => openPrNumbers.has(c[2]))
   assert.equal(prehistoryLabels.length, 6)
-  assert.equal(openLabels.length, 4)
-  assert.equal(labelled.length, 10)
+  assert.equal(openLabels.length, 5) // the four open pull requests and the coordinator's
+  assert.equal(labelled.length, 11)
+  // The dated label reaches the coordinator's pull request too, after every Ready to merge.
+  const handoffCreate = calls.findIndex((c) => c[0] === "pr" && c[1] === "create" &&
+    flag(c, "--head") === "coordinator/handoff")
+  const handoffLabel = calls.findIndex((c) => c[0] === "pr" && c[1] === "edit" && c.includes("--add-label") &&
+    c[2] === String(handoffCreate + 1))
+  const lastReady = Math.max(...calls.map((c, i) => (c[0] === "pr" && c[1] === "comment" &&
+    flag(c, "--body").startsWith("Ready to merge.")) ? i : -1))
+  assert.ok(handoffCreate >= 0 && handoffLabel > lastReady, "label on the coordinator's pull request")
+  assert.equal(flag(calls[handoffLabel], "--add-label"), "bive-merge-authorized-until-2026-11-10")
   // Prehistory: edit label, wait green, merge pinned to the branch head, in that order.
   for (const pr of mergedPrNumbers) {
     const branch = prNumberToBranch[pr]
@@ -388,17 +456,37 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   }
   assert.equal(new Set(Object.values(key.heads)).size, 11)
 
-  // Model B is in the wrong-model pull request (its commit and its body) and nowhere else.
+  // Model B is in the wrong-model pull request (its commit, its body and its hand-over) and nowhere else.
   const withB = calls.filter((call) => call.join("\n").includes(p.modelB))
-  assert.equal(withB.length, 1)
+  assert.equal(withB.length, 2)
+  assert.deepEqual(withB.map((c) => c[0] + " " + c[1]), ["pr create", "pr comment"])
   assert.equal(flag(withB[0], "--head"), "coordinator/handoff")
   assert.ok(flag(withB[0], "--body").endsWith(`\n\n— coordinator ${p.modelB}`))
+  const handoffNumber = String(calls.indexOf(withB[0]) + 1)
+  assert.equal(withB[1][2], handoffNumber)
+  assert.ok(flag(withB[1], "--body").startsWith("Ready to merge."))
+  assert.ok(flag(withB[1], "--body").endsWith(`\n\n— coordinator ${p.modelB}`))
   const names = git(clone, "log", "--all", "--format=%an").split("\n").filter((n) => n.includes(p.modelB))
   assert.deepEqual(names, [`coordinator ${p.modelB}`])
   const ready = calls.filter((call) => call[0] === "pr" && call[1] === "comment" &&
     flag(call, "--body").startsWith("Ready to merge."))
-  assert.equal(ready.length, 4)
-  for (const call of ready) assert.ok(flag(call, "--body").endsWith(`\n\n— coordinator ${p.modelA}`))
+  assert.equal(ready.length, 5)
+  for (const call of ready.filter((c) => c[2] !== handoffNumber)) {
+    assert.ok(flag(call, "--body").endsWith(`\n\n— coordinator ${p.modelA}`))
+  }
+
+  // Branch names: `issue/<n>-<slug>`, n the issue whose report links the branch.
+  const issueBranches = heads.filter((h) => h.startsWith("issue/"))
+  assert.equal(issueBranches.length, 10)
+  for (const h of issueBranches) assert.match(h, /^issue\/\d+-[a-z]+$/, h)
+  const linkedIssue = (body: string) => Number(/(?:Closes|Part of) #(\d+)/.exec(body)?.[1])
+  for (const u of [...p.done, ...p.open]) {
+    const branch = issueBranches.find((h) => h.endsWith(`-${u.slug}`))!
+    const n = Number(/^issue\/(\d+)-/.exec(branch)![1])
+    assert.equal(key.issues[n], u.case, branch)
+    const pr = created.find((c) => flag(c, "--head") === branch)!
+    if (u.link !== "prose") assert.equal(linkedIssue(flag(pr, "--body")), n, branch)
+  }
   const tracked = calls.filter((call) => call[0] === "issue" && call[1] === "comment")
   assert.equal(tracked.length, 4)
   assert.equal(tracked.filter((call) => flag(call, "--body").endsWith(`\n\n— coordinator ${p.modelA}`)).length, 3)
@@ -415,6 +503,42 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   assert.ok(doneWhen.includes(`the forty test files \`${supplied[0]}\` to \`${supplied[39]}\` pass.`), doneWhen)
   assert.ok(flag(calls[quarterPr - 1], "--body").includes("; 40 test files under `tests/"))
 })
+
+test("the scratch repository holds only the template's files and the listed ones, and nothing from this repository",
+  () => {
+    const template = ["AGENTS.md", "opencode.jsonc", ".gitignore", "docs/TEMPLATE.md"]
+    const { root, clone, git } = build({
+      agents: "# Instructions for agents\n", config: '{\n  "policies": [\n    { "x": 1 }\n  ]\n}\n',
+      ignore: "node_modules/\n", files: { "docs/TEMPLATE.md": "# Template\n" } })
+    const p = plan({ seed: 3, date: "2026-11-10" })
+    const slugs: string[] = [...p.done, ...p.open].map((u: { slug: string }) => u.slug)
+    const listed = ["scripts/run-tests.mjs", ".github/workflows/bive-tests.yml", "HANDOFF.md", "AGENTS.md",
+      "opencode.jsonc", ".gitignore", "coordination/launcher.mjs", "coordination/catalog.json",
+      "coordination/README.md"]
+    const heads = git(clone, "ls-remote", "--heads", "origin").trim().split("\n")
+      .map((line) => line.split("\t")[1].replace("refs/heads/", ""))
+    assert.equal(heads.length, 13)
+    const keyPath = join(root, "key.json")
+    assert.ok(existsSync(keyPath))
+    const needles = [process.cwd(), keyPath, "candidate-context"]
+    for (const head of heads) {
+      const paths = git(clone, "ls-tree", "-r", "--name-only", `origin/${head}`).trim().split("\n")
+      for (const path of paths) {
+        const known = template.includes(path) || listed.includes(path) ||
+          slugs.some((s) => path.startsWith(`src/${s}/`) || path.startsWith(`tests/${s}/`))
+        assert.ok(known, `${head}: unexpected file ${path}`)
+        assert.ok(!/^(supervisor-tests|\.bive\/state|\.worktrees)\//.test(path), `${head}: ${path}`)
+        assert.ok(path !== "RESULTS.md" && path.split("/").pop() !== "candidate-context.md", `${head}: ${path}`)
+      }
+      for (const needle of needles) {
+        const grep = spawnSync("git", ["grep", "-F", "-I", "-e", needle, `origin/${head}`],
+          { cwd: clone, encoding: "utf8", timeout: 30000 })
+        assert.equal(grep.status, 1, `${head}: ${needle}: ${grep.stdout}`)
+      }
+    }
+    assert.ok(!resolve(keyPath).startsWith(resolve(clone) + "/"), "the key lies outside the clone")
+    assert.ok(!git(clone, "status", "--porcelain", "--ignored").includes("key.json"))
+  })
 
 test("plan refuses modelA and modelB arguments", () => {
   assert.throws(() => plan({ seed: 1, modelA: "x/y" }), /modelA and modelB come from the seed; they cannot be given/)
@@ -441,6 +565,37 @@ test("configWithLauncherDeny handles null, existing, denying and missing policie
   assert.throws(() => configWithLauncherDeny('{ "foo": 1 }'), /has no policies list/)
 })
 
+test("configWithLauncherDeny drops merge/close denies from an inherited root config", () => {
+  const path = resolve(import.meta.dirname, "..", "opencode.jsonc")
+  const before = readFileSync(path, "utf8")
+  const out = configWithLauncherDeny(before)
+  assert.ok(out.includes('"resource": "shell:opencode run*"'))
+  // launcher deny present
+  assert.match(out, /"resource": "shell:opencode run\*", "effect": "deny"/)
+  // no deny entry remains for merge/close, in policies or permissions
+  for (const line of out.split("\n")) {
+    if (line.includes("gh pr merge") || line.includes("gh pr close")) {
+      assert.ok(!line.includes('"effect": "deny"'), line)
+    }
+  }
+  // production denies for other resources are preserved
+  assert.ok(out.includes('"resource": "shell:rm -rf *"'))
+  assert.ok(out.includes('"resource": "gh pr merge *", "effect": "deny"') === false)
+  // once `//` comment lines are removed, no trailing comma before a closing bracket
+  const withoutComments = out.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n")
+  assert.doesNotMatch(withoutComments, /,\s*\]/)
+  // every other deny of the root config is still present, in both policies and permissions
+  for (const r of ["rm -rf *", "git reset --hard *", "git rebase *", "git push --force*",
+    "git push -f *", "git push * main", "git push * HEAD:main"]) {
+    assert.ok(out.includes(`"resource": "shell:${r}"`), r)
+    assert.ok(out.includes(`"resource": "${r}"`), r)
+  }
+  // the launcher deny is present exactly once
+  assert.equal((out.match(/shell:opencode run\*/g) || []).length, 1)
+  // the root file on disk is unchanged by the call
+  const after = readFileSync(path, "utf8")
+  assert.equal(before, after)
+})
 test("ignoreWithEventLog handles null and newlines", () => {
   assert.equal(ignoreWithEventLog(null), "coordination/events.jsonl\n")
   assert.equal(ignoreWithEventLog("a\n"), "a\ncoordination/events.jsonl\n")
@@ -517,12 +672,12 @@ test("waitGreen tolerates not-yet-registered and pending checks (issue #35)", ()
   ]
   const { calls, key } = build({ sequence, checkPause: 0 })
   const p = plan({ seed: 3, date: "2026-11-10" })
-  const doneBranches = new Set(p.done.map((u: any) => u.branch))
+  const doneSlugs = new Set(p.done.map((u: any) => u.slug))
   const prNumberToBranch: Record<string, string> = {}
   calls.forEach((c, i) => {
     if (c[0] === "pr" && c[1] === "create" && flag(c, "--base") === "milestone/m") {
       const head = flag(c, "--head")
-      if (doneBranches.has(head)) prNumberToBranch[String(i + 1)] = head
+      if (doneSlugs.has(head.replace(/^issue\/\d+-/, ""))) prNumberToBranch[String(i + 1)] = head
     }
   })
   const firstPr = Object.keys(prNumberToBranch).sort((a, b) => Number(a) - Number(b))[0]
@@ -604,4 +759,220 @@ test("waitGreen throws on an unexpected gh pr checks failure", () => {
   const calls: string[][] = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line))
   const mergeCalls = calls.filter((c) => c[0] === "pr" && c[1] === "merge")
   assert.equal(mergeCalls.length, 0)
+})
+
+test("key containment: rejects key-out inside clone", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.throws(() => assertKeyOutside(clone, join(clone, "key.json")))
+  assert.throws(() => apply(plan({ seed: 3, date: "2026-11-10" }), {
+    dir: clone, repo: "o/r", keyOut: join(clone, "key.json") }))
+})
+
+test("key containment: rejects ..answer-key.json (component-unsafe)", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.throws(() => assertKeyOutside(clone, join(clone, "..answer-key.json")))
+})
+
+test("key containment: rejects symlink alias inside clone pointing outside", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  symlinkSync(root, join(clone, "alias"))
+  assert.throws(() => assertKeyOutside(clone, join(clone, "alias", "key.json")))
+})
+
+test("key containment: accepts genuinely outside key", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.doesNotThrow(() => assertKeyOutside(clone, join(root, "key.json")))
+})
+
+test("key containment: handles missing parent path safely", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.doesNotThrow(() => assertKeyOutside(clone, join(root, "nope", "key.json")))
+})
+
+test("key containment: rejects symlink outside clone pointing into clone (missing parent)", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const link = join(root, "link")
+  symlinkSync(clone, link)
+  assert.throws(() => assertKeyOutside(clone, join(link, "newdir", "key.json")))
+})
+
+test("key containment: rejects symlink outside clone with two missing levels", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const link = join(root, "link")
+  symlinkSync(clone, link)
+  assert.throws(() => assertKeyOutside(clone, join(link, "a", "b", "key.json")))
+})
+
+test("key containment: apply throws before gh/git and creates no newdir", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const link = join(root, "link")
+  symlinkSync(clone, link)
+  let thrown: Error | null = null
+  try {
+    apply(plan({ seed: 3, date: "2026-11-10" }), {
+      dir: clone, repo: "o/r", keyOut: join(link, "newdir", "key.json") })
+  } catch (e) {
+    thrown = e as Error
+  }
+  assert.ok(thrown, "expected apply to throw")
+  assert.match(thrown!.message, /--key-out must lie outside the clone/)
+  assert.ok(!existsSync(join(clone, "newdir")), "newdir must not be created inside clone")
+})
+
+test("key containment: accepts outside folder whose name contains two dots", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const outside = join(root, "my..keys")
+  mkdirSync(outside)
+  assert.doesNotThrow(() => assertKeyOutside(clone, join(outside, "key.json")))
+  // missing parent too
+  assert.doesNotThrow(() => assertKeyOutside(clone, join(root, "my..keys2", "key.json")))
+})
+
+test("key containment: ..answer-key.json directly inside clone still throws", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  assert.throws(() => assertKeyOutside(clone, join(clone, "..answer-key.json")))
+})
+
+test("key containment: rejects existing regular file key-out", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const keyOut = join(root, "key.json")
+  writeFileSync(keyOut, "OLD CONTENT")
+  assert.throws(() => assertKeyOutside(clone, keyOut), /already exists/)
+  assert.equal(readFileSync(keyOut, "utf8"), "OLD CONTENT")
+})
+
+test("key containment: rejects symlink key-out into clone", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const target = join(clone, "target.txt")
+  writeFileSync(target, "TARGET")
+  const keyOut = join(root, "link.json")
+  symlinkSync(target, keyOut)
+  assert.throws(() => assertKeyOutside(clone, keyOut), /already exists/)
+  assert.equal(readFileSync(target, "utf8"), "TARGET")
+})
+
+test("key containment: rejects dangling symlink key-out into clone", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const keyOut = join(root, "dangling.json")
+  symlinkSync(join(clone, "nope"), keyOut)
+  assert.throws(() => assertKeyOutside(clone, keyOut), /already exists/)
+  assert.ok(!existsSync(join(clone, "nope")))
+})
+
+test("key containment: race symlink throws cannot be created exclusively", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const keyOut = join(root, "race.json")
+  assert.doesNotThrow(() => assertKeyOutside(clone, keyOut))
+  symlinkSync(join(clone, "inside"), keyOut)
+  assert.throws(() => openKeyExclusive(keyOut), /cannot be created exclusively/)
+  assert.ok(!existsSync(join(clone, "inside")))
+})
+
+test("key containment: fresh outside path with missing parent builds end to end", () => {
+  const root = mkdtempSync(join(tmpdir(), "build-"))
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30000 })
+  git(root, "init", "-q", "--bare", "-b", "main", "remote.git")
+  git(root, "clone", "-q", join(root, "remote.git"), "clone")
+  const clone = join(root, "clone")
+  git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+  git(clone, "push", "-q", "origin", "HEAD:main")
+  const log = join(root, "gh.log")
+  makeGhStub(root, log, `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`)
+  const path = process.env.PATH
+  process.env.PATH = `${join(root, "bin")}:${path}`
+  try {
+    apply(plan({ seed: 3, date: "2026-11-10" }), {
+      dir: clone, repo: "o/r", keyOut: join(root, "nope", "key.json"), labelDelay: 0, checkPause: 0, checkTimeout: 900 })
+  } finally {
+    process.env.PATH = path
+  }
+  const keyPath = join(root, "nope", "key.json")
+  assert.ok(existsSync(keyPath))
+  assert.equal(statSync(keyPath).mode & 0o777, 0o600)
+  const key = JSON.parse(readFileSync(keyPath, "utf8"))
+  assert.equal(key.seed, 3)
+})
+
+test("labelExpiry is the end of that UTC day", () => {
+  assert.equal(labelExpiry("2026-11-10"), "2026-11-10T23:59:59.999Z")
+})
+
+test("preflightLabel: today with enough hours passes; another date or too few hours throws", () => {
+  const now = new Date("2026-11-10T10:00:00.000Z")
+  const ok = preflightLabel({ date: "2026-11-10", now, minHours: 6 })
+  assert.equal(ok.expiresAt, "2026-11-10T23:59:59.999Z")
+  assert.ok(Math.abs(ok.hoursLeft - 14) < 0.001)
+  assert.throws(() => preflightLabel({ date: "2026-11-09", now, minHours: 6 }),
+    /the label date 2026-11-09 is not today's UTC date/)
+  const late = new Date("2026-11-10T20:00:00.000Z")
+  assert.throws(() => preflightLabel({ date: "2026-11-10", now: late, minHours: 6 }),
+    /expires at 2026-11-10T23:59:59.999Z, in 4\.0 h: fewer than --min-label-hours 6; build after 00:00 UTC/)
+  assert.equal(preflightLabel({ date: "2026-11-10", now: late, minHours: 0 }).expiresAt, "2026-11-10T23:59:59.999Z")
+})
+
+test("verifyOpenChecks: a good input has no problem, each rule has a failing input", () => {
+  const pass = (...names: string[]) => names.map((name) => ({ name, bucket: "pass" }))
+  const quarterLog = "not ok 3\nTime budget reached: 12 of 41 test files run.\n"
+  const good = [
+    { case: "honest:small", pr: 1, checks: pass("tests", "merge-gate"), log: null },
+    { case: "honest:large", pr: 2, checks: pass("tests", "merge-gate"), log: null },
+    { case: "3-quarter-run", pr: 3, checks: pass("tests", "merge-gate"), log: quarterLog },
+    { case: "2-quota", pr: 4, checks: [{ name: "merge-gate", bucket: "fail" }], log: null },
+  ]
+  assert.deepEqual(verifyOpenChecks(good), [])
+  const bad = (i: number, patch: any) => verifyOpenChecks(good.map((c, j) => (j === i ? { ...c, ...patch } : c)))
+  assert.equal(bad(0, { checks: pass("merge-gate") }).length, 1)
+  const pending = [{ name: "tests", bucket: "pass" }, { name: "merge-gate", bucket: "pending" }]
+  assert.equal(bad(1, { checks: pending }).length, 1)
+  assert.equal(bad(2, { checks: [{ name: "tests", bucket: "fail" }] }).length, 1)
+  assert.equal(bad(2, { log: "not ok 3\n" }).length, 1)
+  assert.equal(bad(2, { log: "Time budget reached: 12 of 41 test files run.\n" }).length, 1)
+  assert.equal(bad(2, { log: null }).length, 1)
+  assert.equal(bad(3, { checks: pass("tests", "merge-gate") }).length, 2)
+  assert.equal(bad(3, { checks: [{ name: "merge-gate", bucket: "pass" }] }).length, 1)
+  assert.deepEqual(bad(3, { checks: [] }), [])
+})
+
+test("the build verifies the open pull requests and records it and the label's expiry", () => {
+  const { key, calls } = build(null)
+  assert.equal(key.openChecksVerified, true)
+  assert.equal(key.labelExpiresAt, "2026-11-10T23:59:59.999Z")
+  const runView = calls.filter((c) => c[0] === "run" && c[1] === "view")
+  assert.equal(runView.length, 1)
+  assert.equal(flag(runView[0], "--job"), "77")
+  assert.ok(runView[0].includes("--log"))
+})
+
+test("the build stops when the quarter log shows no failure before the stop", () => {
+  assert.throws(() => build({ quarterLog: "Time budget reached: 12 of 41 test files run.\n" }),
+    new RegExp("open pull requests do not show what their cases need: .*3-quarter-run.*no failure before the stop; " +
+      "this scratch repository is partly built and cannot be resumed: abandon it"))
 })

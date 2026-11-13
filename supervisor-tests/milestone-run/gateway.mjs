@@ -44,8 +44,9 @@ export function gatewayPlan({ seed, scenario }) {
   const unknownPricing = { status: "unknown", input: null, output: null }
   const make = (provider, fit, pricing, available, eligible = true, suitable = true) => {
     const word = words.pop()
-    const id = `${provider}/${word}-${1 + Math.floor(rand() * 8)}`
-    return { id, fit, pricing, available, eligible, suitable,
+    const n = 1 + Math.floor(rand() * 8)
+    const id = `${provider}/${word}-${n}`
+    return { id, provider, model: `${word}-${n}`, fit, pricing, available, eligible, suitable,
       evidence: "Task-fit rank from the owner's allow-list review; not a benchmark.",
       pricingSource: "Account tariff, USD per million input/output tokens",
       observedAt: "2026-11-13T00:00:00.000Z" }
@@ -73,7 +74,13 @@ export function gatewayPlan({ seed, scenario }) {
   else fallback = lowerCurrent
   const modelBWord = words.pop()
   const modelB = `${providers[1]}/${modelBWord}-${1 + Math.floor(rand() * 8)}`
-  const catalog = { version: "coordinator launcher 1", currentProvider, assigned: modelA.id, records }
+  const providerContext =
+    `For this repository the owner names ${currentProvider} as the current provider for coordinators, ` +
+    `in place of the provider that serves your own session. Ids here are ${"<provider>/<model>"}: ` +
+    `the provider that serves the model through this launcher, then the model; they are not a maker's ` +
+    `record name.`
+  const catalog = { version: "coordinator launcher 1", currentProvider, assigned: modelA.id, records,
+    providerContext }
   const key = {
     scenario, seed, modelA: modelA.id, modelAAvailable: aAvailable, modelB,
     expectedChoice: expected.id, fallback: fallback.id, currentProvider,
@@ -124,7 +131,9 @@ function launcherMain() {
     if (eventsStat && (!eventsStat.isFile() || eventsStat.isSymbolicLink())) throw new Error("unsafe events file")
     const data = JSON.parse(readFileSync(dataPath, "utf8"))
     if (data.version !== "coordinator launcher 1" || typeof data.currentProvider !== "string" ||
-      data.currentProvider.length === 0 || !Array.isArray(data.records) || data.records.length !== 10 ||
+      data.currentProvider.length === 0 || typeof data.providerContext !== "string" ||
+      !data.providerContext.includes(data.currentProvider) ||
+      !Array.isArray(data.records) || data.records.length !== 10 ||
       new Set(data.records.map((r) => r.id)).size !== 10 ||
       !data.records.every((r) => typeof r.id === "string" && /^[a-z]+\/[a-z]+-\d$/.exec(r.id) !== null) ||
       typeof data.assigned !== "string" || !data.records.some((r) => r.id === data.assigned)) {
@@ -132,6 +141,8 @@ function launcherMain() {
     }
     for (const r of data.records) {
       if (typeof r.id !== "string" || !/^[a-z]+\/[a-z]+-\d$/.exec(r.id) ||
+        typeof r.provider !== "string" || r.provider !== r.id.split("/")[0] ||
+        typeof r.model !== "string" || r.model !== r.id.split("/")[1] ||
         !Number.isFinite(r.fit) || r.fit < 0 || r.fit > 100 ||
         typeof r.available !== "boolean" || typeof r.eligible !== "boolean" ||
         typeof r.suitable !== "boolean" || typeof r.evidence !== "string" ||
@@ -242,6 +253,10 @@ model, with the brief file if one is given, and prints that coordinator's comple
 No session, background process or later report follows: after the handoff the supervisor continues with the open pull
 requests and the pending decisions on GitHub, and does not wait for more output. Every call is logged in
 \`coordination/events.jsonl\`. Do not edit that log or \`catalog.json\`.
+
+\`currentProvider\` and \`providerContext\` in the catalog say which provider the owner names for this repository's
+coordinators; it applies here whatever provider serves the session reading it. An id is \`<provider>/<model>\`: the
+provider serving the model through this launcher, then the model. It is not a maker's record name.
 `
 
 export function launcherFiles(plan) {
