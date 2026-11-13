@@ -33,7 +33,7 @@ merge is the publication. No private key, and no mapping of a draw's numbers to 
 
 | Role | Latest released version | Released | In development |
 | --- | --- | --- | --- |
-| Supervisor | 0 (owner's baseline, below) | 2026-11-13 | queue test v2 (#1); milestone-run v1, fixture revision 2 (#14); coordinator availability (#13) |
+| Supervisor | 0 (owner's baseline, below) | 2026-11-13 | queue test v2 (#1); milestone-run v2, fixture revision 3 (#13) |
 | Coordinator | 0 (owner's baseline, below) | 2026-11-13 | `coordinator-tests/coordinator-run.md` (draft, #16) |
 | Delegate | 0 (owner's baseline, below) | 2026-11-13 | `delegate-tests/brief-run.md` (draft, #16) |
 
