@@ -27,6 +27,11 @@ test("the opening names the provider context and leaks nothing", () => {
     assert.ok(p.opening.includes(
       `For this repository I name ${p.gateway.catalog.currentProvider} as the current provider for coordinators`))
     assert.doesNotMatch(p.opening, banned)
+    for (const rule of ["end with a final adjudication",
+      "Only the coordinator's own follow-up actions may stay pending",
+      "You have 60 minutes of active work"]) {
+      assert.ok(p.opening.includes(rule), `${seed}: ${rule}`)
+    }
     for (const bad of ["fallback", "modelAAvailable", "decoys", "ownerProtocol", "traceCriteria"]) {
       assert.ok(!p.opening.includes(bad), `${seed}: ${bad}`)
     }
