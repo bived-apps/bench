@@ -1,0 +1,4 @@
+# Dependencies and local caches: never committed (installed from package-lock.json).
+node_modules/
+.npm-cache/
+npm-debug.log*
