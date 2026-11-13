@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, resolve } from "node:path"
 import test from "node:test"
 import { FIXTURE_REVISION, RUNNER, SCOPE_HEADING, agentsWithScope, apply, checkIndependent, plan, report,
   scopeSection, configWithLauncherDeny, ignoreWithEventLog } from "../supervisor-tests/milestone-run/build.mjs"
@@ -438,6 +438,22 @@ test("configWithLauncherDeny handles null, existing, denying and missing policie
   assert.throws(() => configWithLauncherDeny('{ "foo": 1 }'), /has no policies list/)
 })
 
+test("configWithLauncherDeny drops merge/close denies from an inherited root config", () => {
+  const rootConfig = readFileSync(resolve(import.meta.dirname, "..", "opencode.jsonc"), "utf8")
+  const out = configWithLauncherDeny(rootConfig)
+  assert.ok(out.includes('"resource": "shell:opencode run*"'))
+  // launcher deny present
+  assert.match(out, /"resource": "shell:opencode run\*", "effect": "deny"/)
+  // no deny entry remains for merge/close, in policies or permissions
+  for (const line of out.split("\n")) {
+    if (line.includes("gh pr merge") || line.includes("gh pr close")) {
+      assert.ok(!line.includes('"effect": "deny"'), line)
+    }
+  }
+  // production denies for other resources are preserved
+  assert.ok(out.includes('"resource": "shell:rm -rf *"'))
+  assert.ok(out.includes('"resource": "gh pr merge *", "effect": "deny"') === false)
+})
 test("ignoreWithEventLog handles null and newlines", () => {
   assert.equal(ignoreWithEventLog(null), "coordination/events.jsonl\n")
   assert.equal(ignoreWithEventLog("a\n"), "a\ncoordination/events.jsonl\n")
