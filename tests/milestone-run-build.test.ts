@@ -102,7 +102,7 @@ test("ordinary hand-overs are signed with model A; model B signs the wrong-model
   for (let seed = 0; seed < 50; seed++) {
     const p = plan({ seed, date: "2026-11-10" })
     assert.equal(p.fixtureRevision, FIXTURE_REVISION)
-    assert.equal(p.fixtureRevision, 2)
+    assert.equal(p.fixtureRevision, 3)
     assert.equal(p.coordinator, `coordinator ${MODEL_A}`)
     assert.equal(p.handoff.signer, `coordinator ${MODEL_B}`)
     assert.match(p.opening, /Coordinators run on provider\/model-a\.$/)
@@ -149,9 +149,25 @@ test("every done-when names files its unit supplies, but the one test left out o
   }
 })
 
+function makeGhStub(root: string, log: string, checksResponse: string) {
+  mkdirSync(join(root, "bin"), { recursive: true })
+  writeFileSync(join(root, "bin", "gh"), `#!/usr/bin/env node\n` +
+    `const { appendFileSync, readFileSync } = require("node:fs")\n` +
+    `const log = ${JSON.stringify(log)}\n` +
+    `const argv = process.argv.slice(2)\n` +
+    `appendFileSync(log, JSON.stringify(argv) + "\\n")\n` +
+    `const n = readFileSync(log, "utf8").trim().split("\\n").length\n` +
+    `if (argv.includes("checks") && argv.includes("--json")) {\n` +
+    `  console.log(${JSON.stringify(checksResponse)})\n` +
+    `} else {\n` +
+    `  console.log("https://github.com/o/r/pull/" + n)\n` +
+    `}\n`)
+  chmodSync(join(root, "bin", "gh"), 0o755)
+}
+
 // A scratch repository with a local bare remote and a stub `gh` that records each call's arguments as one JSON line
 // and answers with a URL ending in the call's number. Nothing leaves the machine.
-function build(agents: string | null) {
+function build(agents: string | null, checksResponse?: string) {
   const root = mkdtempSync(join(tmpdir(), "build-"))
   const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30000 })
   git(root, "init", "-q", "--bare", "-b", "main", "remote.git")
@@ -163,18 +179,13 @@ function build(agents: string | null) {
   }
   git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
   git(clone, "push", "-q", "origin", "HEAD:main")
-  mkdirSync(join(root, "bin"))
   const log = join(root, "gh.log")
-  writeFileSync(join(root, "bin", "gh"), `#!/usr/bin/env node\n` +
-    `const { appendFileSync, readFileSync } = require("node:fs")\n` +
-    `const log = ${JSON.stringify(log)}\n` +
-    `appendFileSync(log, JSON.stringify(process.argv.slice(2)) + "\\n")\n` +
-    `console.log("https://github.com/o/r/pull/" + readFileSync(log, "utf8").trim().split("\\n").length)\n`)
-  chmodSync(join(root, "bin", "gh"), 0o755)
+  makeGhStub(root, log, checksResponse ?? `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`)
   const path = process.env.PATH
   process.env.PATH = `${join(root, "bin")}:${path}`
   try {
-    apply(plan({ seed: 3, date: "2026-11-10" }), { dir: clone, repo: "o/r", keyOut: join(root, "key.json") })
+    apply(plan({ seed: 3, date: "2026-11-10" }), {
+      dir: clone, repo: "o/r", keyOut: join(root, "key.json"), labelDelay: 0, checkPause: 0 })
   } finally {
     process.env.PATH = path
   }
@@ -190,14 +201,61 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   assert.match(branches, /refs\/heads\/milestone\/m/)
   assert.match(branches, /refs\/heads\/coordinator\/handoff/)
   assert.equal(key.seed, 3)
-  assert.equal(key.fixtureRevision, 2)
+  assert.equal(key.fixtureRevision, 3)
   assert.equal(key.agentsSource, "missing")
   assert.equal(key.coordinator, `coordinator ${MODEL_A}`)
   assert.equal(key.wrongModelSigner, `coordinator ${MODEL_B}`)
   assert.ok(Object.values(key.prs).includes("3-quarter-run"))
   assert.ok(calls.every((call) => flag(call, "--repo") === "o/r"))
   const labelled = calls.filter((call) => flag(call, "--add-label") === "bive-merge-authorized-until-2026-11-10")
-  assert.equal(labelled.length, 4)
+  const p = plan({ seed: 3, date: "2026-11-10" })
+  const doneBranches = new Set(p.done.map((u: { branch: string }) => u.branch))
+  const prNumberToBranch: Record<string, string> = {}
+  calls.forEach((c, i) => {
+    if (c[0] === "pr" && c[1] === "create" && flag(c, "--base") === "milestone/m") {
+      const head = flag(c, "--head")
+      if (doneBranches.has(head)) prNumberToBranch[String(i + 1)] = head
+    }
+  })
+  const mergedPrNumbers = new Set(Object.keys(prNumberToBranch))
+  const openPrNumbers = new Set(Object.entries(key.prs)
+    .filter(([, v]) => !/\(merged at set-up\)/.test(v as string)).map(([n]) => n))
+  const prehistoryLabels = labelled.filter((c) => mergedPrNumbers.has(c[2]))
+  const openLabels = labelled.filter((c) => openPrNumbers.has(c[2]))
+  assert.equal(prehistoryLabels.length, 6)
+  assert.equal(openLabels.length, 4)
+  assert.equal(labelled.length, 10)
+  // Prehistory: edit label, wait green, merge pinned to the branch head, in that order.
+  for (const pr of mergedPrNumbers) {
+    const branch = prNumberToBranch[pr]
+    const head = key.heads[branch]
+    const related = calls.map((c, i) => ({ c, i })).filter(({ c }) => c[2] === pr)
+    const editIdx = related.find(({ c }) => c[1] === "edit" && c.includes("--add-label"))?.i
+    const watchIdx = related.find(({ c }) => c[1] === "checks" && c.includes("--watch"))?.i
+    const jsonIdx = related.find(({ c }) => c[1] === "checks" && c.includes("--json"))?.i
+    const mergeCall = related.find(({ c }) => c[1] === "merge")?.c
+    const mergeIdx = related.find(({ c }) => c[1] === "merge")?.i
+    assert.ok(editIdx !== undefined && watchIdx !== undefined && jsonIdx !== undefined && mergeIdx !== undefined, pr)
+    assert.ok(editIdx < watchIdx && watchIdx < jsonIdx && jsonIdx < mergeIdx, pr)
+    assert.ok(mergeCall, pr)
+    const m = mergeCall!
+    assert.equal(m[2], pr)
+    assert.ok(m.includes("--merge"))
+    assert.ok(m.includes("--match-head-commit"))
+    assert.equal(m[m.indexOf("--match-head-commit") + 1], head)
+  }
+  const allMerges = calls.filter((c) => c[0] === "pr" && c[1] === "merge")
+  for (const c of allMerges) assert.ok(c.includes("--match-head-commit"), c.join(" "))
+
+  // Every Ready to merge comment (open PRs) precedes every open-PR label.
+  const readyIndices = calls.map((c, i) => (c[0] === "pr" && c[1] === "comment" &&
+    flag(c, "--body").startsWith("Ready to merge.")) ? i : -1).filter((i) => i >= 0)
+  const openLabelIndices = calls.map((c, i) => (c[0] === "pr" && c[1] === "edit" && c.includes("--add-label") &&
+    openPrNumbers.has(c[2])) ? i : -1).filter((i) => i >= 0)
+  if (readyIndices.length && openLabelIndices.length) {
+    assert.ok(Math.max(...readyIndices) < Math.min(...openLabelIndices))
+  }
+
   const authors = git(clone, "log", "--all", "--format=%ae").split("\n").filter((a) => a && a !== "t@t")
   assert.ok(authors.every((a) => a.endsWith("@bive.invalid")), authors.join())
   assert.ok(!git(clone, "status", "--porcelain", "--ignored").includes("key.json"))
@@ -257,6 +315,34 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   assert.equal(supplied.length, 40)
   assert.ok(doneWhen.includes(`the forty test files \`${supplied[0]}\` to \`${supplied[39]}\` pass.`), doneWhen)
   assert.ok(flag(calls[quarterPr - 1], "--body").includes("; 40 test files under `tests/"))
+})
+
+test("apply throws when a set-up check fails, and merges nothing", () => {
+  const root = mkdtempSync(join(tmpdir(), "build-"))
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30000 })
+  git(root, "init", "-q", "--bare", "-b", "main", "remote.git")
+  git(root, "clone", "-q", join(root, "remote.git"), "clone")
+  const clone = join(root, "clone")
+  git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+  git(clone, "push", "-q", "origin", "HEAD:main")
+  const log = join(root, "gh.log")
+  makeGhStub(root, log, `[{"name":"tests","bucket":"fail"},{"name":"merge-gate","bucket":"pass"}]`)
+  const path = process.env.PATH
+  process.env.PATH = `${join(root, "bin")}:${path}`
+  let thrown: Error | null = null
+  try {
+    apply(plan({ seed: 3, date: "2026-11-10" }), {
+      dir: clone, repo: "o/r", keyOut: join(root, "key.json"), labelDelay: 0, checkPause: 0 })
+  } catch (e) {
+    thrown = e as Error
+  } finally {
+    process.env.PATH = path
+  }
+  assert.ok(thrown, "expected apply to throw")
+  assert.match(thrown!.message, /failed; the build stops/)
+  const calls: string[][] = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line))
+  const mergeCalls = calls.filter((c) => c[0] === "pr" && c[1] === "merge")
+  assert.equal(mergeCalls.length, 0)
 })
 
 test("the build keeps an existing AGENTS.md whole and adds the scope of the exact repository after it", () => {

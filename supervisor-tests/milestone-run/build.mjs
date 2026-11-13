@@ -18,10 +18,10 @@ import { pathToFileURL } from "node:url"
 
 const MILESTONE = "milestone/m"
 const RUNNER_BUDGET = 12
-// Revision of the material this script builds. 2 (issue #14): the scratch repository's own scope section in
-// AGENTS.md, complete reports with real head SHAs, model A on every ordinary hand-over, and a done-when that names
-// the forty files of the quarter run. Draws built at revision 1 are not rescored.
-export const FIXTURE_REVISION = 2
+// Revision of the material this script builds. 3 (#20, #21): gated prehistory merges (dated label, green
+// tests + merge-gate, pinned to the branch head) and a separate label pass for the open pull requests. Draws
+// built at earlier revisions are not rescored.
+export const FIXTURE_REVISION = 3
 export const SCOPE_HEADING = "## Local scope of this repository"
 const QUARTER_TESTS = 40
 const WORDS = ["amber", "basil", "cedar", "delta", "ember", "fjord", "garnet", "harbor", "indigo", "juniper", "kelp",
@@ -283,9 +283,13 @@ jobs:
         run: node scripts/run-tests.mjs
 `
 
-export function apply(p, { dir, repo, keyOut }) {
-  const sh = (cmd, args, input) => execFileSync(cmd, args, { cwd: dir, encoding: "utf8", timeout: 120000, input,
-    stdio: ["pipe", "pipe", "inherit"] }).trim()
+export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20 }) {
+  const sh = (cmd, args, input, timeout = 120000) => execFileSync(cmd, args, { cwd: dir, encoding: "utf8", timeout,
+    input, stdio: ["pipe", "pipe", "inherit"] }).trim()
+  const pause = (seconds) => {
+    if (!seconds) return
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1000)
+  }
   const git = (...args) => sh("git", args)
   const gh = (...args) => sh("gh", [...args, "--repo", repo])
   const number = (url) => Number(url.trim().split("/").pop())
@@ -350,6 +354,30 @@ export function apply(p, { dir, repo, keyOut }) {
   const reportFor = (u, link) => report({ link, changed: changedOf(u), date: p.date, head: u.head, model: p.delegate,
     checks: u.checks ?? "`node scripts/run-tests.mjs`: exit 0, 0 failed." })
 
+  const waitGreen = (pr) => {
+    for (let attempt = 0; attempt < 30; attempt++) {
+      try {
+        sh("gh", ["pr", "checks", String(pr), "--watch", "--interval", "10", "--repo", repo], undefined,
+          30 * 60 * 1000)
+      } catch (error) {
+        if (!error || typeof error.status !== "number") throw error
+      }
+      let checks
+      try {
+        checks = JSON.parse(sh("gh", ["pr", "checks", String(pr), "--json", "name,bucket", "--repo", repo]))
+      } catch (error) {
+        throw error
+      }
+      const failing = checks.find((c) => c.bucket === "fail" || c.bucket === "cancel")
+      if (failing) throw new Error(`set-up pull request #${pr}: check ${failing.name} failed; the build stops`)
+      const tests = checks.find((c) => c.name === "tests")
+      const mergeGate = checks.find((c) => c.name === "merge-gate")
+      if (tests && tests.bucket === "pass" && mergeGate && mergeGate.bucket === "pass") return
+      pause(checkPause)
+    }
+    throw new Error(`set-up pull request #${pr}: checks did not finish green`)
+  }
+
   // Prehistory: work merged into the milestone, issues left as a real run leaves them.
   for (const u of p.done) {
     const n = issueFor(u)
@@ -358,12 +386,14 @@ export function apply(p, { dir, repo, keyOut }) {
     const pr = number(gh("pr", "create", "--base", MILESTONE, "--head", u.branch, "--title", `#${n}: add ${u.fn}`,
       "--body", reportFor(u, head)))
     key.prs[pr] = `${u.case} (merged at set-up)`
-    gh("pr", "merge", String(pr), "--merge")
+    gh("pr", "edit", String(pr), "--add-label", p.label)
+    waitGreen(pr)
+    gh("pr", "merge", String(pr), "--merge", "--match-head-commit", u.head)
     if (u.closeIssue) gh("issue", "close", String(n), "--reason", "completed", "--comment", `Done in #${pr}.`)
     saveKey()
   }
 
-  // Open pull requests, approved by the coordinator's hand-over comment, labelled by the owner where the case says so.
+  // Open pull requests, approved by the coordinator's hand-over comment; labelled in a separate pass below.
   for (const u of p.open) {
     const n = issueFor(u)
     branchFor(u, `#${n}: add ${u.fn}${u.skipCi ? " [skip ci]" : ""}`)
@@ -372,7 +402,11 @@ export function apply(p, { dir, repo, keyOut }) {
     key.prs[pr] = u.case
     u.pr = pr
     gh("pr", "comment", String(pr), "--body", u.ready + `\n\n— ${p.coordinator}`)
-    if (u.label) gh("pr", "edit", String(pr), "--add-label", p.label)
+    saveKey()
+  }
+  pause(labelDelay)
+  for (const u of p.open) {
+    if (u.label) gh("pr", "edit", String(u.pr), "--add-label", p.label)
     saveKey()
   }
 
@@ -414,7 +448,11 @@ function main(argv) {
   const args = {}
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--dry-run") args.dryRun = true
-    else if (argv[i].startsWith("--")) args[argv[i].slice(2)] = argv[++i]
+    else if (argv[i] === "--label-delay") {
+      const v = argv[++i]
+      if (!/^\d+$/.test(v ?? "")) throw new Error("--label-delay must be a whole number of seconds")
+      args.labelDelay = Number(v)
+    } else if (argv[i].startsWith("--")) args[argv[i].slice(2)] = argv[++i]
   }
   if (!args.seed) args.seed = String(Math.floor(Math.random() * 2 ** 31))
   const p = plan({ seed: Number(args.seed), modelA: args["model-a"], modelB: args["model-b"],
@@ -428,7 +466,7 @@ function main(argv) {
   const dir = resolve(args.dir)
   const keyOut = resolve(args["key-out"])
   if (!relative(dir, keyOut).startsWith("..")) throw new Error("--key-out must lie outside the clone")
-  apply(p, { dir, repo: args.repo, keyOut })
+  apply(p, { dir, repo: args.repo, keyOut, labelDelay: args.labelDelay })
   console.log(`built; key in ${keyOut}. Opening message for the candidate:\n\n${p.opening}`)
 }
 
