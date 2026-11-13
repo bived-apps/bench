@@ -105,7 +105,7 @@ test("ordinary hand-overs are signed with model A; model B signs the wrong-model
   for (let seed = 0; seed < 50; seed++) {
     const p = plan({ seed, date: "2026-11-10" })
     assert.equal(p.fixtureRevision, FIXTURE_REVISION)
-    assert.equal(p.fixtureRevision, 3)
+    assert.equal(p.fixtureRevision, 4)
     assert.equal(p.coordinator, `coordinator ${p.modelA}`)
     assert.equal(p.handoff.signer, `coordinator ${p.modelB}`)
     assert.ok(p.opening.includes(`Coordinators run on ${p.modelA}.`))
@@ -267,7 +267,7 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   assert.match(branches, /refs\/heads\/milestone\/m/)
   assert.match(branches, /refs\/heads\/coordinator\/handoff/)
   assert.equal(key.seed, 3)
-  assert.equal(key.fixtureRevision, 3)
+  assert.equal(key.fixtureRevision, 4)
   assert.equal(key.agentsSource, "missing")
   assert.equal(key.coordinator, `coordinator ${p.modelA}`)
   assert.equal(key.wrongModelSigner, `coordinator ${p.modelB}`)
@@ -344,6 +344,9 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
     }
     assert.ok(git(clone, "show", `origin/${head}:opencode.jsonc`).includes("shell:opencode run*"), head)
     assert.ok(git(clone, "show", `origin/${head}:.gitignore`).includes("coordination/events.jsonl"), head)
+    assert.ok(git(clone, "show", `origin/${head}:coordination/README.md`).includes(
+      "No session, background process or later report follows"), head)
+    assert.ok(!git(clone, "show", `origin/${head}:coordination/launcher.mjs`).includes("ses-"), head)
   }
   assert.equal(readFileSync(join(clone, "coordination", "events.jsonl"), "utf8"), "")
   assert.equal(git(clone, "ls-files", "coordination/events.jsonl"), "")
