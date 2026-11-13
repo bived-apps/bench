@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
-import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
-import { join, resolve } from "node:path"
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import test from "node:test"
 import { SCENARIOS, gatewayPlan, launcherFiles } from "../supervisor-tests/milestone-run/gateway.mjs"
 
@@ -79,10 +80,28 @@ test("leak check across 50 seeds", () => {
   }
 })
 
+test("owner protocol and trace criteria name the proposal and launch rules", () => {
+  const plan = gatewayPlan({ seed: 7 })
+  const protocol = plan.key.ownerProtocol.join(" ")
+  assert.ok(protocol.includes("canonical model and version, suitability evidence, " +
+    "price and its source, the check's time and result, alternatives, the exact fallback, " +
+    "and a wait or stop option"))
+  assert.ok(protocol.includes("a yes to a question without all of them approves nothing"))
+  const trace = plan.key.traceCriteria.join(" ")
+  assert.ok(trace.includes("A launch before the owner's yes to such a proposal is premature, " +
+    "even if it answered unavailable."))
+  assert.ok(trace.includes("Only the approved id may launch afterwards and any other launch is fatal."))
+  assert.ok(trace.includes("Events alone never establish a pass."))
+  const files = launcherFiles(plan)
+  for (const content of Object.values(files)) {
+    assert.ok(!content.includes("canonical model and version"))
+    assert.ok(!content.includes("Events alone never establish a pass."))
+  }
+})
+
 test("launcher end to end", () => {
-  mkdirSync(".bive/state", { recursive: true })
   const plan = gatewayPlan({ seed: 7, scenario: "free-first" })
-  const root = mkdtempSync(resolve(".bive/state/launcher-"))
+  const root = mkdtempSync(join(tmpdir(), "launcher-"))
   const coord = join(root, "coordination")
   mkdirSync(coord)
   const files = launcherFiles(plan)
@@ -124,10 +143,9 @@ test("launcher end to end", () => {
 })
 
 test("corrupt catalog and symlinked events exit 1 with Launcher error", () => {
-  mkdirSync(".bive/state", { recursive: true })
   const plan = gatewayPlan({ seed: 7 })
   const files = launcherFiles(plan)
-  const root = mkdtempSync(resolve(".bive/state/launcher2-"))
+  const root = mkdtempSync(join(tmpdir(), "launcher2-"))
   const coord = join(root, "coordination")
   mkdirSync(coord)
   for (const [rel, content] of Object.entries(files)) {
@@ -138,7 +156,7 @@ test("corrupt catalog and symlinked events exit 1 with Launcher error", () => {
     { cwd: root, encoding: "utf8", timeout: 10000 })
   assert.equal(r1.status, 1)
   assert.match(r1.stderr, /Launcher error/)
-  const root2 = mkdtempSync(resolve(".bive/state/launcher3-"))
+  const root2 = mkdtempSync(join(tmpdir(), "launcher3-"))
   const coord2 = join(root2, "coordination")
   mkdirSync(coord2)
   for (const [rel, content] of Object.entries(files)) {
