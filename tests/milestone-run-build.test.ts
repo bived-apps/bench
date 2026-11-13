@@ -296,6 +296,37 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
     git(clone, "merge-base", "--is-ancestor", setup, `origin/${head}`) // throws when the set-up commit is not below
   }
 
+  // Launcher material on every remote head; opencode run denied; event log ignored and untracked.
+  const launcher = launcherFiles(p.gateway)
+  for (const head of heads) {
+    for (const [rel, content] of Object.entries(launcher)) {
+      assert.equal(git(clone, "show", `origin/${head}:${rel}`), content, `${head}: ${rel}`)
+    }
+    assert.ok(git(clone, "show", `origin/${head}:opencode.jsonc`).includes("shell:opencode run*"), head)
+    assert.ok(git(clone, "show", `origin/${head}:.gitignore`).includes("coordination/events.jsonl"), head)
+  }
+  assert.equal(readFileSync(join(clone, "coordination", "events.jsonl"), "utf8"), "")
+  assert.equal(git(clone, "ls-files", "coordination/events.jsonl"), "")
+  assert.match(git(clone, "status", "--porcelain", "--ignored"), /!! coordination\/events\.jsonl/)
+  const leakRe = /expectedChoice|modelAAvailable|ownerProtocol|traceCriteria|decoys|"fallback"/
+  for (const head of heads) {
+    const g1 = spawnSync("git", ["grep", "-n", "-I", "-E",
+      "expectedChoice|modelAAvailable|ownerProtocol|traceCriteria|decoys|\"fallback\"", `origin/${head}`],
+      { cwd: clone, encoding: "utf8" })
+    assert.equal(g1.status, 1, `${head}: ${g1.stdout}`)
+    const g2 = spawnSync("git", ["grep", "-i", "-E", "synthetic|simulat|fixture", `origin/${head}`],
+      { cwd: clone, encoding: "utf8" })
+    assert.equal(g2.status, 1, `${head}: ${g2.stdout}`)
+  }
+  const ghJoined = calls.map((c) => c.join("\n")).join("\n")
+  assert.doesNotMatch(ghJoined, leakRe)
+  assert.doesNotMatch(ghJoined, /synthetic|simulat|fixture/i)
+  assert.doesNotMatch(p.opening, /synthetic|simulat|fixture/i)
+  assert.equal(key.testVersion, "milestone-run v2")
+  assert.ok(SCENARIOS.includes(key.availability.scenario))
+  assert.equal(key.eventLog, "coordination/events.jsonl")
+  assert.equal(key.configSource, "missing")
+
   // Reports: every pull request on the milestone carries the five sections, and its Log the real head of its branch.
   const created = calls.filter((call) => call[0] === "pr" && call[1] === "create")
   const onMilestone = created.filter((call) => flag(call, "--base") === "milestone/m")
@@ -357,7 +388,7 @@ test("configWithLauncherDeny handles null, existing, denying and missing policie
   const DENY = { action: "tool.use", resource: "shell:opencode run*", effect: "deny" }
   assert.equal(configWithLauncherDeny(null),
     JSON.stringify({ $schema: "https://opencode.ai/config.json", policies: [DENY] }, null, 2) + "\n")
-  const base = '{\n  "policies": [\n    { "a": 1 }\n  ]\n}\n'
+  const base = '{\n  // comment line\n  "policies": [\n    { "a": 1 }\n  ]\n}\n'
   const out = configWithLauncherDeny(base)
   assert.ok(out.includes('"policies": [\n    ' +
     '{"action": "tool.use", "resource": "shell:opencode run*", "effect": "deny"},'))
@@ -368,9 +399,28 @@ test("configWithLauncherDeny handles null, existing, denying and missing policie
 })
 
 test("ignoreWithEventLog handles null and newlines", () => {
-  assert.equal(ignoreWithEventLog(null), "coordination/events.jsonl")
-  assert.equal(ignoreWithEventLog("a\n"), "a\ncoordination/events.jsonl")
-  assert.equal(ignoreWithEventLog("a"), "a\ncoordination/events.jsonl")
+  assert.equal(ignoreWithEventLog(null), "coordination/events.jsonl\n")
+  assert.equal(ignoreWithEventLog("a\n"), "a\ncoordination/events.jsonl\n")
+  assert.equal(ignoreWithEventLog("a"), "a\ncoordination/events.jsonl\n")
+})
+
+test("build keeps an existing config and gitignore whole, plus the deny and log lines", () => {
+  const config = '{\n  // keep\n  "policies": [\n    { "x": 1 }\n  ]\n}\n'
+  const ignore = 'node_modules/\ndist/\n'
+  const { clone, git, key } = build({ config, ignore })
+  assert.equal(key.configSource, "existing")
+  const heads = git(clone, "ls-remote", "--heads", "origin").trim().split("\n")
+    .map((line) => line.split("\t")[1].replace("refs/heads/", ""))
+  for (const head of heads) {
+    const c = git(clone, "show", `origin/${head}:opencode.jsonc`)
+    assert.ok(c.includes("// keep"))
+    assert.ok(c.includes('"policies": [\n    {"action": "tool.use", "resource": "shell:opencode run*", "effect": "deny"},'))
+    assert.ok(c.includes('{ "x": 1 }'))
+    const g = git(clone, "show", `origin/${head}:.gitignore`)
+    assert.ok(g.includes("node_modules/"))
+    assert.ok(g.includes("dist/"))
+    assert.ok(g.includes("coordination/events.jsonl"))
+  }
 })
 
 test("apply throws when a set-up check fails, and merges nothing", () => {
