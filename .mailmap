@@ -1,0 +1,2 @@
+# Resolve the initial helper commit's serving alias without rewriting pushed history.
+delegate reflection/beam-1.0-501b-a23b <delegate@bive.invalid> delegate opencode-go/beam-free <delegate@bive.invalid>

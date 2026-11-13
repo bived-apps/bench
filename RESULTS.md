@@ -60,6 +60,16 @@ client, a gateway or a router alike. The name a tool gives it on a machine is an
 | `anthropic/claude-opus-5-5` | `claude-agent/opus` (answered `claude-opus-5-5` on 2026-11-13), `opencode/claude-opus-5-5`, `openrouter/anthropic/claude-opus-5.5` |
 | `openai/gpt-6.1-sol` | `opencode/gpt-6.1-sol`, `openrouter/openai/gpt-6.1-sol`, `openai/gpt-6.1-sol-fast` |
 | `openai/gpt-6-sol` | `openrouter/openai/gpt-6-sol`, `openai/gpt-6-sol-fast` |
+| `reflection/beam-1.0-501b-a23b` | `opencode/beam-free`, `opencode-go/beam-free` (OpenCode provider `canonical_id`, checked 2026-11-13; released 2026-10-05, updated 2026-10-16) |
+
+Beam identity evidence: OpenCode's public model responses at
+`https://opencode.ai/zen/v1/models` and `https://opencode.ai/zen/go/v1/models`
+map `beam-free` to `reflection/beam-1.0-501b-a23b`. The candidate itself was
+supplied only its serving alias and reported its underlying version unknown.
+This provider mapping is an identity record, not a qualification or a scored draw.
+Helper commit `3467a52` predates resolution and retains its original serving-alias
+author in raw Git history; `.mailmap` resolves that author for mailmap-aware views.
+New commits use the canonical name. No pushed history was rewritten.
 
 ## Roles below: the least costly agent that can do it (owner, 2026-11-13)
 

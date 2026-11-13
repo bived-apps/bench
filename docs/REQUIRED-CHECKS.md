@@ -74,7 +74,10 @@ These run on GitHub and appear as commit statuses on a pull request.
 - **Workflow file**: `.github/workflows/bive-authorize-merge.yml`; helper `.github/scripts/authorize-merge.mjs`.
 - **Trigger**: `workflow_dispatch` on the repository's default branch, with PR number and full reviewed head SHA.
 - **Setup**: repository variable `BIVE_MERGE_OWNER` names the human owner's GitHub login, not an organisation name.
-  Missing configuration fails closed. See [`MERGE-AUTHORIZATION.md`](MERGE-AUTHORIZATION.md).
+  In **Settings → Secrets and variables → Actions → Variables**, create `BIVE_MERGE_OWNER` with that login.
+  No PAT or additional secret is needed. Missing configuration fails closed.
+  Then select the default branch in **Actions → bive-authorize-merge → Run workflow**, enter the PR number and
+  full reviewed head SHA, and run it yourself. See [`MERGE-AUTHORIZATION.md`](MERGE-AUTHORIZATION.md).
 - **Trust**: verifies original and rerun actor against that owner and the exact default-branch workflow ref; checks
   out default-branch code only, never PR-head code; no stored PAT. Account identity cannot distinguish a human
   from an agent using the same account: agents remain prohibited from dispatching or rerunning this action.

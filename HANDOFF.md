@@ -55,11 +55,15 @@ the template that a role or a human does not read during a task.
   must identify the human owner. Until rollout, bootstrap via the existing manual gate; no grant was applied here.
   Role core prompts are unchanged; stricter instructions are in their project additions. Frozen fixture revisions
   and the pause on draws remain unchanged.
-  Review checkpoint: helper commit `3467a52` passed 18 focused tests, but its canonical maker/model/version was
-  not established and its author is the serving alias. The delegate corrected its report to blocked. A coordinator
-  regression reproduced a valid grant left behind after an accepted-but-timed-out label POST; fixes are requested,
-  with further commits held for the owner's attribution decision. The coordinator's 17 workflow/gate checks passed
-  in a temporary overlay using that helper; this is not a passing self-contained integration branch or deployment.
+  Review checkpoint: helper commit `3467a52` passed 18 focused tests, but its author used the serving alias before
+  canonical identity was resolved. The owner requested a lookup rather than an exception: OpenCode provider metadata
+  explicitly maps `beam-free` to `reflection/beam-1.0-501b-a23b` (released 2026-10-05, updated 2026-10-16).
+  Alias evidence is in `RESULTS.md`; `.mailmap` resolves the initial author without rewriting pushed history.
+  The delegate resumed under canonical identity. A coordinator regression reproduced a valid grant left behind
+  after an accepted-but-timed-out label POST; fixes passed 24 focused tests, independently rerun, and were pushed
+  under canonical identity. Helper PR #72 is at `430a089` (documentation-only after safety commit `4a50eb1`);
+  review/CI and supervisor merge remain pending. The coordinator's 17 workflow/gate checks passed
+  in a temporary overlay using the original helper; this is not a passing self-contained integration branch or deployment.
 
 - **Owner-approved coordinator teams (owner, 2026-11-13)**: prefer the strongest suitable verified-free usable
   coordinator; otherwise recommend a suitable usable coordinator from the current supervisor provider. Before launch
