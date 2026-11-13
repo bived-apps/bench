@@ -261,11 +261,13 @@ function build(options: any = null, checksResponse?: string) {
   let checkTimeout: number | undefined = undefined
   let checkPause: number | undefined = undefined
   let quarterLog: string | undefined = undefined
+  let files: Record<string, string> = {}
   if (typeof options === "string") agents = options
   else if (options && typeof options === "object") {
     agents = options.agents ?? null
     config = options.config ?? null
     ignore = options.ignore ?? null
+    files = options.files ?? {}
     if (options.checksResponse) checksResponse = options.checksResponse
     if (options.sequence) sequence = options.sequence
     if (typeof options.quarterLog === "string") quarterLog = options.quarterLog
@@ -290,6 +292,11 @@ function build(options: any = null, checksResponse?: string) {
   if (ignore !== null) {
     writeFileSync(join(clone, ".gitignore"), ignore)
     git(clone, "add", ".gitignore")
+  }
+  for (const [rel, content] of Object.entries(files)) {
+    mkdirSync(join(clone, rel, ".."), { recursive: true })
+    writeFileSync(join(clone, rel), content)
+    git(clone, "add", rel)
   }
   git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
   git(clone, "push", "-q", "origin", "HEAD:main")
@@ -496,6 +503,42 @@ test("the build runs end to end against a local remote and a stub gh, and keeps 
   assert.ok(doneWhen.includes(`the forty test files \`${supplied[0]}\` to \`${supplied[39]}\` pass.`), doneWhen)
   assert.ok(flag(calls[quarterPr - 1], "--body").includes("; 40 test files under `tests/"))
 })
+
+test("the scratch repository holds only the template's files and the listed ones, and nothing from this repository",
+  () => {
+    const template = ["AGENTS.md", "opencode.jsonc", ".gitignore", "docs/TEMPLATE.md"]
+    const { root, clone, git } = build({
+      agents: "# Instructions for agents\n", config: '{\n  "policies": [\n    { "x": 1 }\n  ]\n}\n',
+      ignore: "node_modules/\n", files: { "docs/TEMPLATE.md": "# Template\n" } })
+    const p = plan({ seed: 3, date: "2026-11-10" })
+    const slugs: string[] = [...p.done, ...p.open].map((u: { slug: string }) => u.slug)
+    const listed = ["scripts/run-tests.mjs", ".github/workflows/bive-tests.yml", "HANDOFF.md", "AGENTS.md",
+      "opencode.jsonc", ".gitignore", "coordination/launcher.mjs", "coordination/catalog.json",
+      "coordination/README.md"]
+    const heads = git(clone, "ls-remote", "--heads", "origin").trim().split("\n")
+      .map((line) => line.split("\t")[1].replace("refs/heads/", ""))
+    assert.equal(heads.length, 13)
+    const keyPath = join(root, "key.json")
+    assert.ok(existsSync(keyPath))
+    const needles = [process.cwd(), keyPath, "candidate-context"]
+    for (const head of heads) {
+      const paths = git(clone, "ls-tree", "-r", "--name-only", `origin/${head}`).trim().split("\n")
+      for (const path of paths) {
+        const known = template.includes(path) || listed.includes(path) ||
+          slugs.some((s) => path.startsWith(`src/${s}/`) || path.startsWith(`tests/${s}/`))
+        assert.ok(known, `${head}: unexpected file ${path}`)
+        assert.ok(!/^(supervisor-tests|\.bive\/state|\.worktrees)\//.test(path), `${head}: ${path}`)
+        assert.ok(path !== "RESULTS.md" && path.split("/").pop() !== "candidate-context.md", `${head}: ${path}`)
+      }
+      for (const needle of needles) {
+        const grep = spawnSync("git", ["grep", "-F", "-I", "-e", needle, `origin/${head}`],
+          { cwd: clone, encoding: "utf8", timeout: 30000 })
+        assert.equal(grep.status, 1, `${head}: ${needle}: ${grep.stdout}`)
+      }
+    }
+    assert.ok(!resolve(keyPath).startsWith(resolve(clone) + "/"), "the key lies outside the clone")
+    assert.ok(!git(clone, "status", "--porcelain", "--ignored").includes("key.json"))
+  })
 
 test("plan refuses modelA and modelB arguments", () => {
   assert.throws(() => plan({ seed: 1, modelA: "x/y" }), /modelA and modelB come from the seed; they cannot be given/)
