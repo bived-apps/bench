@@ -74,3 +74,8 @@ and integration branches. This makes a red base visible promptly; adapt the work
 
 Agents work on the branch **`bived`** by pull request; `main` is the template people copy and only the owner merges
 into it. Start the coordinator with the prompt in `HANDOFF.md › Running it`. MIT licence.
+
+## Results
+
+Validations and draws, per model and version, and the rule that says which test version validates:
+[`RESULTS.md`](RESULTS.md).
