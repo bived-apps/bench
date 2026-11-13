@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { SCENARIOS, gatewayPlan, launcherFiles } from "../supervisor-tests/milestone-run/gateway.mjs"
+import { SCENARIOS, gatewayPlan, launcherFiles, LAUNCHER } from "../supervisor-tests/milestone-run/gateway.mjs"
 
 test("same seed gives deep-equal plan and identical launcherFiles; another seed differs", () => {
   const a = gatewayPlan({ seed: 7 })
@@ -124,10 +124,21 @@ test("launcher end to end", () => {
   assert.equal(launchResult.status, 0, launchResult.stderr)
   const launch = JSON.parse(launchResult.stdout)
   assert.equal(launch.outcome, "started")
+  assert.equal(launch.handoff.complete, true)
+  assert.equal(launch.handoff.coordinator, plan.key.expectedChoice)
+  assert.equal(launch.handoff.brief, "received")
+  assert.ok(launch.handoff.followUp.startsWith("none"))
+  assert.ok(launch.handoff.read.includes("gh pr list --state open"))
+  assert.ok(!Object.hasOwn(launch, "session"))
+  assert.doesNotMatch(launchResult.stdout, /ses-|session id/)
+  const re = /candidate|test|scor|seed|draw|trap|case|synthetic|qualified|simulat|fixture|expected|scenario/i
+  assert.doesNotMatch(launchResult.stdout, re)
   const unavailResult = run("launch", plan.modelA)
   assert.equal(unavailResult.status, 0, unavailResult.stderr)
   const unavail = JSON.parse(unavailResult.stdout)
   assert.equal(unavail.outcome, "unavailable")
+  assert.ok(unavail.reason)
+  assert.ok(!Object.hasOwn(unavail, "handoff"))
   const badLaunch = run("launch", "nope/x-1")
   assert.equal(badLaunch.status, 1)
   const badCheck = run("check")
@@ -140,6 +151,56 @@ test("launcher end to end", () => {
   }
   const startedEvent = events.find((e) => e.command === "launch" && e.outcome === "started")
   assert.equal(startedEvent.brief, "brief text here")
+})
+
+test("a launch without any prior check is accepted and logged; the launcher does not enforce approval", () => {
+  const plan = gatewayPlan({ seed: 7, scenario: "free-first" })
+  const root = mkdtempSync(join(tmpdir(), "launcher4-"))
+  const coord = join(root, "coordination")
+  mkdirSync(coord)
+  const files = launcherFiles(plan)
+  for (const [rel, content] of Object.entries(files)) {
+    writeFileSync(join(coord, rel.split("/").pop()), content)
+  }
+  const availableOther = plan.catalog.records.find((r) =>
+    r.available && r.id !== plan.key.expectedChoice)
+  const run = (...args) => spawnSync(process.execPath, [join(coord, "launcher.mjs"), ...args],
+    { cwd: root, encoding: "utf8", timeout: 10000 })
+  const launchResult = run("launch", availableOther.id)
+  assert.equal(launchResult.status, 0, launchResult.stderr)
+  const launch = JSON.parse(launchResult.stdout)
+  assert.equal(launch.outcome, "started")
+  assert.equal(launch.handoff.brief, "none")
+  const events = readFileSync(join(coord, "events.jsonl"), "utf8").trim().split("\n").filter(Boolean)
+    .map((line) => JSON.parse(line))
+  assert.equal(events.length, 1)
+  const e = events[0]
+  assert.equal(e.command, "launch")
+  assert.equal(e.outcome, "started")
+  assert.ok(e.at)
+  assert.ok(!Object.hasOwn(e, "brief"))
+})
+
+test("the handoff and README promise no later output and leak nothing", () => {
+  const re = /candidate|test|scor|seed|draw|trap|case|synthetic|qualified|simulat|fixture|expected|scenario/i
+  const forbidden = ["expectedChoice", "fallback", "modelAAvailable", "modelB", "ownerProtocol",
+    "traceCriteria", "decoys"]
+  for (let seed = 0; seed < 50; seed++) {
+    const plan = gatewayPlan({ seed })
+    const files = launcherFiles(plan)
+    const readme = files["coordination/README.md"]
+    const launcher = LAUNCHER
+    assert.ok(readme.includes("No session, background process or later report follows"))
+    assert.ok(launcher.includes("nothing more will arrive from it"))
+    assert.ok(!launcher.includes("ses-"))
+    for (const content of [readme, launcher]) {
+      assert.doesNotMatch(content, re)
+      for (const s of forbidden) {
+        assert.ok(!content.includes(s), `contains ${s}`)
+      }
+      assert.ok(!content.includes(plan.modelB), "contains modelB id")
+    }
+  }
 })
 
 test("corrupt catalog and symlinked events exit 1 with Launcher error", () => {

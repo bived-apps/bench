@@ -19,10 +19,9 @@ import { pathToFileURL } from "node:url"
 
 const MILESTONE = "milestone/m"
 const RUNNER_BUDGET = 12
-// Revision of the material this script builds. 3 (#20, #21): gated prehistory merges (dated label, green
-// tests + merge-gate, pinned to the branch head) and a separate label pass for the open pull requests. Draws
-// built at earlier revisions are not rescored.
-export const FIXTURE_REVISION = 3
+// Revision of the material this script builds. 4 (#37): a successful launch returns the coordinator's complete
+// handoff inline, with no session or later report; earlier draws are not patched or rescored.
+export const FIXTURE_REVISION = 4
 export const SCOPE_HEADING = "## Local scope of this repository"
 const QUARTER_TESTS = 40
 const WORDS = ["amber", "basil", "cedar", "delta", "ember", "fjord", "garnet", "harbor", "indigo", "juniper", "kelp",
