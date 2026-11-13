@@ -117,10 +117,13 @@ export function configWithLauncherDeny(existing) {
   // denies for `gh pr merge` / `gh pr close` are dropped from the emitted scratch config. Launcher deny
   // is still inserted below. Production root opencode.jsonc is never edited.
   const dropResources = new Set(["shell:gh pr merge *", "shell:gh pr close *", "gh pr merge *", "gh pr close *"])
-  const text = existing.split("\n").filter((line) => {
+  let text = existing.split("\n").filter((line) => {
     if (!line.includes("deny")) return true
     return ![...dropResources].some((r) => line.includes(r))
   }).join("\n")
+  // Dropping a deny line can leave a trailing comma before the list's closing bracket (when the dropped entry
+  // was the last one). Remove any comma followed only by whitespace and `//` comment lines before a `]`.
+  text = text.replace(/(,)(\s*(?:\/\/[^\n]*\n\s*)*)\]/g, "$2]")
   const marker = '"policies": ['
   const idx = text.indexOf(marker)
   if (idx === -1) throw new Error("opencode.jsonc has no policies list")

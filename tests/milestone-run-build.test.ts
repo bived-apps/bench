@@ -439,8 +439,9 @@ test("configWithLauncherDeny handles null, existing, denying and missing policie
 })
 
 test("configWithLauncherDeny drops merge/close denies from an inherited root config", () => {
-  const rootConfig = readFileSync(resolve(import.meta.dirname, "..", "opencode.jsonc"), "utf8")
-  const out = configWithLauncherDeny(rootConfig)
+  const path = resolve(import.meta.dirname, "..", "opencode.jsonc")
+  const before = readFileSync(path, "utf8")
+  const out = configWithLauncherDeny(before)
   assert.ok(out.includes('"resource": "shell:opencode run*"'))
   // launcher deny present
   assert.match(out, /"resource": "shell:opencode run\*", "effect": "deny"/)
@@ -453,6 +454,20 @@ test("configWithLauncherDeny drops merge/close denies from an inherited root con
   // production denies for other resources are preserved
   assert.ok(out.includes('"resource": "shell:rm -rf *"'))
   assert.ok(out.includes('"resource": "gh pr merge *", "effect": "deny"') === false)
+  // once `//` comment lines are removed, no trailing comma before a closing bracket
+  const withoutComments = out.split("\n").filter((l) => !/^\s*\/\//.test(l)).join("\n")
+  assert.doesNotMatch(withoutComments, /,\s*\]/)
+  // every other deny of the root config is still present, in both policies and permissions
+  for (const r of ["rm -rf *", "git reset --hard *", "git rebase *", "git push --force*",
+    "git push -f *", "git push * main", "git push * HEAD:main"]) {
+    assert.ok(out.includes(`"resource": "shell:${r}"`), r)
+    assert.ok(out.includes(`"resource": "${r}"`), r)
+  }
+  // the launcher deny is present exactly once
+  assert.equal((out.match(/shell:opencode run\*/g) || []).length, 1)
+  // the root file on disk is unchanged by the call
+  const after = readFileSync(path, "utf8")
+  assert.equal(before, after)
 })
 test("ignoreWithEventLog handles null and newlines", () => {
   assert.equal(ignoreWithEventLog(null), "coordination/events.jsonl\n")
