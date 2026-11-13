@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import { execFileSync, spawnSync } from "node:child_process"
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { FIXTURE_REVISION, RUNNER, SCOPE_HEADING, agentsWithScope, apply, assertKeyOutside, checkIndependent, plan, report,
+import { FIXTURE_REVISION, RUNNER, SCOPE_HEADING, agentsWithScope, apply, assertKeyOutside, checkIndependent, openKeyExclusive, plan, report,
   scopeSection, configWithLauncherDeny, ignoreWithEventLog } from "../supervisor-tests/milestone-run/build.mjs"
 import { SCENARIOS, launcherFiles } from "../supervisor-tests/milestone-run/gateway.mjs"
 
@@ -693,4 +693,72 @@ test("key containment: ..answer-key.json directly inside clone still throws", ()
   const clone = join(root, "clone")
   mkdirSync(clone)
   assert.throws(() => assertKeyOutside(clone, join(clone, "..answer-key.json")))
+})
+
+test("key containment: rejects existing regular file key-out", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const keyOut = join(root, "key.json")
+  writeFileSync(keyOut, "OLD CONTENT")
+  assert.throws(() => assertKeyOutside(clone, keyOut), /already exists/)
+  assert.equal(readFileSync(keyOut, "utf8"), "OLD CONTENT")
+})
+
+test("key containment: rejects symlink key-out into clone", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const target = join(clone, "target.txt")
+  writeFileSync(target, "TARGET")
+  const keyOut = join(root, "link.json")
+  symlinkSync(target, keyOut)
+  assert.throws(() => assertKeyOutside(clone, keyOut), /already exists/)
+  assert.equal(readFileSync(target, "utf8"), "TARGET")
+})
+
+test("key containment: rejects dangling symlink key-out into clone", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const keyOut = join(root, "dangling.json")
+  symlinkSync(join(clone, "nope"), keyOut)
+  assert.throws(() => assertKeyOutside(clone, keyOut), /already exists/)
+  assert.ok(!existsSync(join(clone, "nope")))
+})
+
+test("key containment: race symlink throws cannot be created exclusively", () => {
+  const root = mkdtempSync(join(tmpdir(), "kc-"))
+  const clone = join(root, "clone")
+  mkdirSync(clone)
+  const keyOut = join(root, "race.json")
+  assert.doesNotThrow(() => assertKeyOutside(clone, keyOut))
+  symlinkSync(join(clone, "inside"), keyOut)
+  assert.throws(() => openKeyExclusive(keyOut), /cannot be created exclusively/)
+  assert.ok(!existsSync(join(clone, "inside")))
+})
+
+test("key containment: fresh outside path with missing parent builds end to end", () => {
+  const root = mkdtempSync(join(tmpdir(), "build-"))
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30000 })
+  git(root, "init", "-q", "--bare", "-b", "main", "remote.git")
+  git(root, "clone", "-q", join(root, "remote.git"), "clone")
+  const clone = join(root, "clone")
+  git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+  git(clone, "push", "-q", "origin", "HEAD:main")
+  const log = join(root, "gh.log")
+  makeGhStub(root, log, `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`)
+  const path = process.env.PATH
+  process.env.PATH = `${join(root, "bin")}:${path}`
+  try {
+    apply(plan({ seed: 3, date: "2026-11-10" }), {
+      dir: clone, repo: "o/r", keyOut: join(root, "nope", "key.json"), labelDelay: 0, checkPause: 0, checkTimeout: 900 })
+  } finally {
+    process.env.PATH = path
+  }
+  const keyPath = join(root, "nope", "key.json")
+  assert.ok(existsSync(keyPath))
+  assert.equal(statSync(keyPath).mode & 0o777, 0o600)
+  const key = JSON.parse(readFileSync(keyPath, "utf8"))
+  assert.equal(key.seed, 3)
 })

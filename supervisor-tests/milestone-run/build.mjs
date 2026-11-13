@@ -12,7 +12,7 @@
 // the exact --repo only; it never edits the AGENTS.md of the repository this script lives in.
 
 import { execFileSync } from "node:child_process"
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs"
+import { closeSync, constants, ftruncateSync, lstatSync, mkdirSync, openSync, readFileSync, realpathSync, statSync, writeFileSync, writeSync } from "node:fs"
 import { gatewayPlan, launcherFiles } from "./gateway.mjs"
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -356,13 +356,35 @@ export function assertKeyOutside(dir, keyOut) {
   if (isAbsolute(relative(dirLex, key)) || isAbsolute(relative(dirReal, realKey))) {
     throw new Error("--key-out must lie outside the clone")
   }
+  // The key path must not already exist: never overwrite or follow an existing file, directory or symlink.
+  let existing = null
+  try {
+    existing = lstatSync(key)
+  } catch (error) {
+    if (!error || error.code !== "ENOENT") throw error
+  }
+  if (existing) {
+    throw new Error(`--key-out ${key} already exists: give a new path (the build never overwrites or follows an existing key path)`)
+  }
   return { dirReal, key, realKey }
+}
+
+export function openKeyExclusive(keyOut) {
+  try {
+    return openSync(keyOut, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+  } catch (error) {
+    throw new Error(`--key-out ${keyOut}: cannot be created exclusively (${error.code})`)
+  }
 }
 
 export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20, checkTimeout = 900 }) {
   dir = realpathSync(resolve(dir))
   if (!statSync(dir).isDirectory()) throw new Error("--dir must be an existing directory")
-  assertKeyOutside(dir, keyOut)
+  const { dirReal } = assertKeyOutside(dir, keyOut)
+  mkdirSync(dirname(keyOut), { recursive: true })
+  const parentReal = realpathSync(dirname(keyOut))
+  if (within(dirReal, parentReal)) throw new Error("--key-out must lie outside the clone")
+  const fd = openKeyExclusive(keyOut)
   const sh = (cmd, args, input, timeout = 120000) => execFileSync(cmd, args, { cwd: dir, encoding: "utf8", timeout,
     input, stdio: ["pipe", "pipe", "inherit"] }).trim()
   const pause = (seconds) => {
@@ -377,7 +399,7 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
     coordinator: p.coordinator, wrongModelSigner: p.handoff.signer, agentsSource: null, configSource: null,
     heads: {}, issues: {}, prs: {}, comments: {}, opening: p.opening, availability: p.gateway.key,
     eventLog: "coordination/events.jsonl" }
-  const saveKey = () => { mkdirSync(dirname(keyOut), { recursive: true }); writeFileSync(keyOut, JSON.stringify(key, null, 2)) }
+  const saveKey = () => { ftruncateSync(fd, 0); writeSync(fd, JSON.stringify(key, null, 2), 0) }
   const commit = (author, message, files) => {
     for (const [file, body] of Object.entries(files)) {
       mkdirSync(dirname(join(dir, file)), { recursive: true })
@@ -395,6 +417,7 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
 
   // Base: the runner, the workflow and the repository's own scope section on main, then the milestone branch. Every
   // later branch starts from this commit, so all of them carry the section.
+  try {
   git("checkout", "-q", "main")
   let agents = null
   try {
@@ -582,6 +605,9 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
   key.prs[toMain] = p.toMain.case
   saveKey()
   git("checkout", "-q", "main")
+  } finally {
+    closeSync(fd)
+  }
 }
 
 function main(argv) {
