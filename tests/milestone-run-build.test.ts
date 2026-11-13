@@ -169,7 +169,8 @@ function makeGhStub(root: string, log: string, checksResponse: string, sequence?
     `const isJson = isChecks && argv.includes("--json")\n` +
     `const isWatch = isChecks && argv.includes("--watch")\n` +
     `const seq = ${seqJson}\n` +
-    `function readCounter() { try { return Number(readFileSync(counterFile, "utf8").trim()) || 0 } catch (e) { return 0 } }\n` +
+    `function readCounter() { try { return Number(readFileSync(counterFile, "utf8").trim()) || 0 } ` +
+    `catch (e) { return 0 } }\n` +
     `function writeCounter(n) { writeFileSync(counterFile, String(n)) }\n` +
     `if (isJson) {\n` +
     `  const i = readCounter()\n` +
@@ -241,7 +242,9 @@ function build(options: any = null, checksResponse?: string) {
   git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
   git(clone, "push", "-q", "origin", "HEAD:main")
   const log = join(root, "gh.log")
-  makeGhStub(root, log, checksResponse ?? `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`, sequence)
+  makeGhStub(root, log,
+    checksResponse ?? `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`,
+    sequence)
   const path = process.env.PATH
   process.env.PATH = `${join(root, "bin")}:${path}`
   try {
@@ -546,7 +549,8 @@ test("waitGreen stops with the bounded message when checks never register", () =
   git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
   git(clone, "push", "-q", "origin", "HEAD:main")
   const log = join(root, "gh.log")
-  const seq = Array.from({ length: 100 }, () => ({ status: 1, stdout: "", stderr: "no checks reported on the 'issue/x' branch" }))
+  const seq = Array.from({ length: 100 }, () => ({ status: 1, stdout: "",
+    stderr: "no checks reported on the 'issue/x' branch" }))
   makeGhStub(root, log, `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`, seq)
   const path = process.env.PATH
   process.env.PATH = `${join(root, "bin")}:${path}`

@@ -430,7 +430,8 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
           // fall through to the failure below
         }
       }
-      throw new Error(`set-up pull request #${pr}: gh pr checks failed (exit ${error.status}): ${firstLine(error.stderr)}`)
+      throw new Error(
+        `set-up pull request #${pr}: gh pr checks failed (exit ${error.status}): ${firstLine(error.stderr)}`)
     }
     let checks
     try {
@@ -442,14 +443,19 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
     return { ready: true, checks }
   }
   const waitGreen = (pr) => {
-    // GitHub usually registers a pull request's checks within a minute and finishes them within two; 15 minutes leaves room for a queue of runners.
+    // GitHub usually registers a pull request's checks within a minute and finishes them within two;
+    // 15 minutes leaves room for a queue of runners.
     const deadline = Date.now() + checkTimeout * 1000
     while (Date.now() < deadline) {
       try {
         sh("gh", ["pr", "checks", String(pr), "--watch", "--interval", "10", "--repo", repo], undefined,
           Math.max(1000, deadline - Date.now()))
       } catch (error) {
-        if (!error || typeof error.status !== "number") throw error
+        if (error && (error.code === "ETIMEDOUT" || error.signal)) {
+          // Timed out while waiting: treat as not finished and let the deadline decide.
+        } else if (!error || typeof error.status !== "number") {
+          throw error
+        }
       }
       const r = checksJson(pr)
       if (!r.ready) {
@@ -464,7 +470,10 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20,
       if (tests && tests.bucket === "pass" && mergeGate && mergeGate.bucket === "pass") return
       pause(checkPause)
     }
-    throw new Error(`set-up pull request #${pr}: checks not green within ${checkTimeout} s; this scratch repository is now partly built and cannot be resumed: abandon it and build into a fresh scratch repository`)
+    throw new Error(
+      `set-up pull request #${pr}: checks not green within ${checkTimeout} s; ` +
+      `this scratch repository is now partly built ` +
+      `and cannot be resumed: abandon it and build into a fresh scratch repository`)
   }
 
   // Prehistory: work merged into the milestone, issues left as a real run leaves them.
@@ -562,7 +571,9 @@ function main(argv) {
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error))
     console.error(`the key written so far is in ${keyOut}`)
-    console.error("a partly built scratch repository cannot be resumed; use a fresh one (the build refuses a clone that already carries the scope section)")
+    console.error(
+      "a partly built scratch repository cannot be resumed; use a fresh one " +
+      "(the build refuses a clone that already carries the scope section)")
     process.exitCode = 1
     return
   }
