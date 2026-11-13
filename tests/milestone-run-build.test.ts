@@ -154,17 +154,48 @@ test("every done-when names files its unit supplies, but the one test left out o
   }
 })
 
-function makeGhStub(root: string, log: string, checksResponse: string) {
+function makeGhStub(root: string, log: string, checksResponse: string, sequence?: any) {
   mkdirSync(join(root, "bin"), { recursive: true })
+  const counterFile = log + ".seq"
+  writeFileSync(counterFile, "0")
+  const seqJson = sequence ? JSON.stringify(sequence) : "null"
   writeFileSync(join(root, "bin", "gh"), `#!/usr/bin/env node\n` +
-    `const { appendFileSync, readFileSync } = require("node:fs")\n` +
+    `const { appendFileSync, readFileSync, writeFileSync } = require("node:fs")\n` +
     `const log = ${JSON.stringify(log)}\n` +
+    `const counterFile = ${JSON.stringify(counterFile)}\n` +
     `const argv = process.argv.slice(2)\n` +
     `appendFileSync(log, JSON.stringify(argv) + "\\n")\n` +
-    `const n = readFileSync(log, "utf8").trim().split("\\n").length\n` +
-    `if (argv.includes("checks") && argv.includes("--json")) {\n` +
-    `  console.log(${JSON.stringify(checksResponse)})\n` +
+    `const isChecks = argv.includes("checks")\n` +
+    `const isJson = isChecks && argv.includes("--json")\n` +
+    `const isWatch = isChecks && argv.includes("--watch")\n` +
+    `const seq = ${seqJson}\n` +
+    `function readCounter() { try { return Number(readFileSync(counterFile, "utf8").trim()) || 0 } ` +
+    `catch (e) { return 0 } }\n` +
+    `function writeCounter(n) { writeFileSync(counterFile, String(n)) }\n` +
+    `if (isJson) {\n` +
+    `  const i = readCounter()\n` +
+    `  if (seq && i < seq.length) {\n` +
+    `    const r = seq[i]\n` +
+    `    writeCounter(i + 1)\n` +
+    `    process.stdout.write((r.stdout == null ? "" : String(r.stdout)) + "\\n")\n` +
+    `    if (r.stderr) process.stderr.write(String(r.stderr) + "\\n")\n` +
+    `    process.exit(typeof r.status === "number" ? r.status : 0)\n` +
+    `  } else {\n` +
+    `    console.log(${JSON.stringify(checksResponse)})\n` +
+    `    process.exit(0)\n` +
+    `  }\n` +
+    `} else if (isWatch) {\n` +
+    `  const i = readCounter()\n` +
+    `  const next = (seq && i < seq.length) ? seq[i] : null\n` +
+    `  const noChecks = !!(next && next.status === 1 && /no checks reported/i.test(String(next.stderr || "")))\n` +
+    `  if (noChecks) {\n` +
+    `    process.stderr.write("no checks reported on the 'x' branch\\n")\n` +
+    `    process.exit(1)\n` +
+    `  } else {\n` +
+    `    process.exit(0)\n` +
+    `  }\n` +
     `} else {\n` +
+    `  const n = readFileSync(log, "utf8").trim().split("\\n").length\n` +
     `  console.log("https://github.com/o/r/pull/" + n)\n` +
     `}\n`)
   chmodSync(join(root, "bin", "gh"), 0o755)
@@ -176,12 +207,18 @@ function build(options: any = null, checksResponse?: string) {
   let agents: string | null = null
   let config: string | null = null
   let ignore: string | null = null
+  let sequence: any = undefined
+  let checkTimeout: number | undefined = undefined
+  let checkPause: number | undefined = undefined
   if (typeof options === "string") agents = options
   else if (options && typeof options === "object") {
     agents = options.agents ?? null
     config = options.config ?? null
     ignore = options.ignore ?? null
     if (options.checksResponse) checksResponse = options.checksResponse
+    if (options.sequence) sequence = options.sequence
+    if (typeof options.checkTimeout === "number") checkTimeout = options.checkTimeout
+    if (typeof options.checkPause === "number") checkPause = options.checkPause
   } else if (options === null) {
     agents = null
   }
@@ -205,12 +242,15 @@ function build(options: any = null, checksResponse?: string) {
   git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
   git(clone, "push", "-q", "origin", "HEAD:main")
   const log = join(root, "gh.log")
-  makeGhStub(root, log, checksResponse ?? `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`)
+  makeGhStub(root, log,
+    checksResponse ?? `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`,
+    sequence)
   const path = process.env.PATH
   process.env.PATH = `${join(root, "bin")}:${path}`
   try {
     apply(plan({ seed: 3, date: "2026-11-10" }), {
-      dir: clone, repo: "o/r", keyOut: join(root, "key.json"), labelDelay: 0, checkPause: 0 })
+      dir: clone, repo: "o/r", keyOut: join(root, "key.json"), labelDelay: 0,
+      checkPause: checkPause ?? 0, checkTimeout: checkTimeout ?? 900 })
   } finally {
     process.env.PATH = path
   }
@@ -464,4 +504,101 @@ test("the build keeps an existing AGENTS.md whole and adds the scope of the exac
     assert.equal(agents, existing + "\n" + scopeSection("o/r"), head)
     assert.equal(agents.split(SCOPE_HEADING).length, 2, head)
   }
+})
+
+test("waitGreen tolerates not-yet-registered and pending checks (issue #35)", () => {
+  const sequence = [
+    { status: 1, stdout: "", stderr: "no checks reported on the 'issue/x' branch" },
+    { status: 1, stdout: "", stderr: "no checks reported on the 'issue/x' branch" },
+    { status: 8, stdout: '[{"name":"tests","bucket":"pending"},{"name":"merge-gate","bucket":"pending"}]', stderr: "" },
+  ]
+  const { calls, key } = build({ sequence, checkPause: 0 })
+  const p = plan({ seed: 3, date: "2026-11-10" })
+  const doneBranches = new Set(p.done.map((u: any) => u.branch))
+  const prNumberToBranch: Record<string, string> = {}
+  calls.forEach((c, i) => {
+    if (c[0] === "pr" && c[1] === "create" && flag(c, "--base") === "milestone/m") {
+      const head = flag(c, "--head")
+      if (doneBranches.has(head)) prNumberToBranch[String(i + 1)] = head
+    }
+  })
+  const firstPr = Object.keys(prNumberToBranch).sort((a, b) => Number(a) - Number(b))[0]
+  const branch = prNumberToBranch[firstPr]
+  const head = key.heads[branch]
+  const related = calls.map((c, i) => ({ c, i })).filter(({ c }) => c[2] === firstPr)
+  const editIdx = related.find(({ c }) => c[1] === "edit" && c.includes("--add-label"))!.i
+  const jsonIndices = related.filter(({ c }) => c[1] === "checks" && c.includes("--json")).map(({ i }) => i)
+  const mergeIdx = related.find(({ c }) => c[1] === "merge")!.i
+  assert.ok(jsonIndices.length >= 3, `expected at least 3 json calls, got ${jsonIndices.length}`)
+  assert.ok(editIdx < Math.min(...jsonIndices), "label before checks")
+  assert.ok(Math.max(...jsonIndices) < mergeIdx, "checks before merge")
+  const mergeCall = related.find(({ c }) => c[1] === "merge")!.c
+  assert.ok(mergeCall.includes("--merge"))
+  assert.ok(mergeCall.includes("--match-head-commit"))
+  assert.equal(mergeCall[mergeCall.indexOf("--match-head-commit") + 1], head)
+  const mergeCalls = calls.filter((c) => c[0] === "pr" && c[1] === "merge")
+  assert.equal(mergeCalls.length, 6)
+})
+
+test("waitGreen stops with the bounded message when checks never register", () => {
+  const root = mkdtempSync(join(tmpdir(), "build-"))
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30000 })
+  git(root, "init", "-q", "--bare", "-b", "main", "remote.git")
+  git(root, "clone", "-q", join(root, "remote.git"), "clone")
+  const clone = join(root, "clone")
+  git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+  git(clone, "push", "-q", "origin", "HEAD:main")
+  const log = join(root, "gh.log")
+  const seq = Array.from({ length: 100 }, () => ({ status: 1, stdout: "",
+    stderr: "no checks reported on the 'issue/x' branch" }))
+  makeGhStub(root, log, `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`, seq)
+  const path = process.env.PATH
+  process.env.PATH = `${join(root, "bin")}:${path}`
+  let thrown: Error | null = null
+  const start = Date.now()
+  try {
+    apply(plan({ seed: 3, date: "2026-11-10" }), {
+      dir: clone, repo: "o/r", keyOut: join(root, "key.json"), labelDelay: 0, checkPause: 0.2, checkTimeout: 1 })
+  } catch (e) {
+    thrown = e as Error
+  } finally {
+    process.env.PATH = path
+  }
+  const elapsed = Date.now() - start
+  assert.ok(thrown, "expected apply to throw")
+  assert.match(thrown!.message, /checks not green within 1 s/)
+  assert.match(thrown!.message, /abandon it and build into a fresh scratch repository/)
+  const calls: string[][] = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line))
+  const mergeCalls = calls.filter((c) => c[0] === "pr" && c[1] === "merge")
+  assert.equal(mergeCalls.length, 0)
+  assert.ok(elapsed < 20000, `took ${elapsed} ms`)
+})
+
+test("waitGreen throws on an unexpected gh pr checks failure", () => {
+  const root = mkdtempSync(join(tmpdir(), "build-"))
+  const git = (cwd: string, ...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", timeout: 30000 })
+  git(root, "init", "-q", "--bare", "-b", "main", "remote.git")
+  git(root, "clone", "-q", join(root, "remote.git"), "clone")
+  const clone = join(root, "clone")
+  git(clone, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "init")
+  git(clone, "push", "-q", "origin", "HEAD:main")
+  const log = join(root, "gh.log")
+  const seq = [{ status: 4, stdout: "", stderr: "HTTP 502" }]
+  makeGhStub(root, log, `[{"name":"tests","bucket":"pass"},{"name":"merge-gate","bucket":"pass"}]`, seq)
+  const path = process.env.PATH
+  process.env.PATH = `${join(root, "bin")}:${path}`
+  let thrown: Error | null = null
+  try {
+    apply(plan({ seed: 3, date: "2026-11-10" }), {
+      dir: clone, repo: "o/r", keyOut: join(root, "key.json"), labelDelay: 0, checkPause: 0, checkTimeout: 900 })
+  } catch (e) {
+    thrown = e as Error
+  } finally {
+    process.env.PATH = path
+  }
+  assert.ok(thrown, "expected apply to throw")
+  assert.match(thrown!.message, /gh pr checks failed \(exit 4\): HTTP 502/)
+  const calls: string[][] = readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line))
+  const mergeCalls = calls.filter((c) => c[0] === "pr" && c[1] === "merge")
+  assert.equal(mergeCalls.length, 0)
 })
