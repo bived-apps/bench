@@ -15,10 +15,21 @@ merge is the publication. No private key, and no mapping of a draw's numbers to 
 - A validation holds for that model and version only, under its record name (*Names* below); a new model version is
   a new candidate.
 - **Version 1 is written by the agents of version 0** (owner, 2026-11-13): every agent recorded at version 0 takes
-  part in writing version 1 of the tests, and version 1 is released only once each of them has drawn it and passed
-  with a sufficient score, set by the owner before the first draw. Until then version 0 stays the latest released
-  version. An agent draws from a seed it has not seen, and whoever administers and scores a draw is not the model
-  drawn.
+  part in writing version 1 of the tests. An agent draws from a seed it has not seen, and whoever administers and
+  scores a draw is not the model drawn.
+- **Release** (owner, 2026-11-13): the owner releases a version once a development draw has run from start to finish
+  without finding a defect of the material. That draw, if it was strict, counts as the first draw of the released
+  version.
+- **A pass is two seeds**: a model is validated on a version when it has passed two strict draws of it on different
+  seeds. Each model's validation counts for that model as soon as its second draw is scored; no model waits for
+  another.
+- **A strict draw**: the version fixed before the draw; administrator and scorer other than the model drawn; everything
+  below the candidate simulated; the owner answering only what the test's protocol allows and doing nothing on GitHub
+  during the draw. A draw that is not strict is `development` or `void` and validates no one.
+- **A failure is final for that version**: a model that failed a strict draw draws again only on the next released
+  version. A `void` draw counts neither way and is drawn again from a new seed.
+- **Version 0 expires per model**: after the release of a later version of a role's test, an agent recorded at
+  version 0 keeps that role for 14 days, or until it fails a strict draw of the new version, whichever comes first.
 
 | Role | Latest released version | Released | In development |
 | --- | --- | --- | --- |
