@@ -320,13 +320,14 @@ jobs:
         run: node scripts/run-tests.mjs
 `
 
-export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20 }) {
+export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20, checkTimeout = 900 }) {
   const sh = (cmd, args, input, timeout = 120000) => execFileSync(cmd, args, { cwd: dir, encoding: "utf8", timeout,
     input, stdio: ["pipe", "pipe", "inherit"] }).trim()
   const pause = (seconds) => {
     if (!seconds) return
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, seconds * 1000)
   }
+  const firstLine = (text) => String(text ?? "").split(/\r?\n/)[0].trim()
   const git = (...args) => sh("git", args)
   const gh = (...args) => sh("gh", [...args, "--repo", repo])
   const number = (url) => Number(url.trim().split("/").pop())
@@ -412,20 +413,50 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20 
   const reportFor = (u, link) => report({ link, changed: changedOf(u), date: p.date, head: u.head, model: p.delegate,
     checks: u.checks ?? "`node scripts/run-tests.mjs`: exit 0, 0 failed." })
 
+  const checksJson = (pr) => {
+    let stdout
+    try {
+      stdout = execFileSync("gh", ["pr", "checks", String(pr), "--json", "name,bucket", "--repo", repo],
+        { cwd: dir, encoding: "utf8", timeout: 120000, stdio: ["ignore", "pipe", "pipe"] })
+    } catch (error) {
+      if (error && error.status === 1 && /no checks reported/i.test(String(error.stderr))) {
+        return { ready: false }
+      }
+      if (error && error.status === 8) {
+        try {
+          const parsed = JSON.parse(error.stdout)
+          if (Array.isArray(parsed)) return { ready: true, checks: parsed }
+        } catch {
+          // fall through to the failure below
+        }
+      }
+      throw new Error(`set-up pull request #${pr}: gh pr checks failed (exit ${error.status}): ${firstLine(error.stderr)}`)
+    }
+    let checks
+    try {
+      checks = JSON.parse(stdout)
+    } catch {
+      throw new Error(`set-up pull request #${pr}: gh pr checks failed (exit 0): unreadable output`)
+    }
+    if (Array.isArray(checks) && checks.length === 0) return { ready: false }
+    return { ready: true, checks }
+  }
   const waitGreen = (pr) => {
-    for (let attempt = 0; attempt < 30; attempt++) {
+    // GitHub usually registers a pull request's checks within a minute and finishes them within two; 15 minutes leaves room for a queue of runners.
+    const deadline = Date.now() + checkTimeout * 1000
+    while (Date.now() < deadline) {
       try {
         sh("gh", ["pr", "checks", String(pr), "--watch", "--interval", "10", "--repo", repo], undefined,
-          30 * 60 * 1000)
+          Math.max(1000, deadline - Date.now()))
       } catch (error) {
         if (!error || typeof error.status !== "number") throw error
       }
-      let checks
-      try {
-        checks = JSON.parse(sh("gh", ["pr", "checks", String(pr), "--json", "name,bucket", "--repo", repo]))
-      } catch (error) {
-        throw error
+      const r = checksJson(pr)
+      if (!r.ready) {
+        pause(checkPause)
+        continue
       }
+      const checks = r.checks
       const failing = checks.find((c) => c.bucket === "fail" || c.bucket === "cancel")
       if (failing) throw new Error(`set-up pull request #${pr}: check ${failing.name} failed; the build stops`)
       const tests = checks.find((c) => c.name === "tests")
@@ -433,7 +464,7 @@ export function apply(p, { dir, repo, keyOut, labelDelay = 120, checkPause = 20 
       if (tests && tests.bucket === "pass" && mergeGate && mergeGate.bucket === "pass") return
       pause(checkPause)
     }
-    throw new Error(`set-up pull request #${pr}: checks did not finish green`)
+    throw new Error(`set-up pull request #${pr}: checks not green within ${checkTimeout} s; this scratch repository is now partly built and cannot be resumed: abandon it and build into a fresh scratch repository`)
   }
 
   // Prehistory: work merged into the milestone, issues left as a real run leaves them.
@@ -526,7 +557,15 @@ function main(argv) {
   const dir = resolve(args.dir)
   const keyOut = resolve(args["key-out"])
   if (!relative(dir, keyOut).startsWith("..")) throw new Error("--key-out must lie outside the clone")
-  apply(p, { dir, repo: args.repo, keyOut, labelDelay: args.labelDelay })
+  try {
+    apply(p, { dir, repo: args.repo, keyOut, labelDelay: args.labelDelay })
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error))
+    console.error(`the key written so far is in ${keyOut}`)
+    console.error("a partly built scratch repository cannot be resumed; use a fresh one (the build refuses a clone that already carries the scope section)")
+    process.exitCode = 1
+    return
+  }
   console.log(`built; key in ${keyOut}. Opening message for the candidate:\n\n${p.opening}`)
 }
 
