@@ -75,7 +75,8 @@ the template that a role or a human does not read during a task.
   latest released version of its test, never on the version in development. Version 0 is the owner's baseline, a
   decision and not a passed draw: `anthropic/claude-fable-5-1`, `anthropic/claude-fable-5-2`, `openai/gpt-6.1-sol` and
   `openai/gpt-6-sol` are recorded for the three roles at version 0 until a later version is released. Version 1 is
-  written by those agents and released only once each has drawn it and passed. A model is recorded under its maker's
+  written by those agents; it is released on stable material, each model passes on two seeds of its own, and
+  version 0 expires per model 14 days after a release (`RESULTS.md`). A model is recorded under its maker's
   name whatever provider served it, and passes or fails once. Each role looks for the least costly agent able to hold
   the role below it, with the owner's approval of the team. Validations, draws, names and approved teams are in
   `RESULTS.md`, no longer here.
