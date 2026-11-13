@@ -51,6 +51,9 @@ node supervisor-tests/milestone-run/build.mjs --dir <clone> --repo <owner/name> 
   --key-out <file outside the clone> [--label-delay <s>] [--min-label-hours <n>]
 ```
 
+What a candidate can and cannot see, how its session is isolated, and what a pass shows are on the administration
+page `supervisor-tests/milestone-run/candidate-context.md`, which is never copied into a scratch repository.
+
 `--min-label-hours <n>`: the dated label expires at the end of its UTC day, so the build refuses when the label would
 expire within `<n>` hours (default 6), or when its date is not today's UTC date; build after 00:00 UTC. The key records
 `labelExpiresAt`.
