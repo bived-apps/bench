@@ -1,4 +1,4 @@
-<img src="https://raw.githubusercontent.com/bived-apps/bive/main/docs/design/icon/icon-d.svg" width="96" alt="Bive's mark: a capital B drawn by small delegates">
+<img src="docs/design/bench-mark.svg" width="96" alt="Bench's mark: a stopwatch traced by small paper companions, the owner at the pivot of its hand">
 
 # Bench: which models behave well in which role, measured.
 
