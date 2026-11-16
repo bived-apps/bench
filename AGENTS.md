@@ -56,7 +56,10 @@ session. A non-interactive run does not ask: it stops with `blocked: no role ass
   or a change of model.
 - **One branch and one pull request per issue**: `issue/<n>-<slug>`. Only the coordinator creates pull requests for
   issue work, after receiving the pushed branch and delegate's report. The body starts with `Closes #N` (or `Part of
-  #N` and what is left) and holds the delegate's report.
+  #N` and what is left) and holds the delegate's report. **Or per bounded batch** (owner, 2026-11-15, #254): related
+  issues that serve one outcome may travel in one branch `batch/<slug>` and one pull request, with one `Closes #N` line
+  per issue, its exclusions and acceptance checks, at most 6 files changed besides tests unless the owner raises it
+  (`docs/COORDINATING.md` › *Batch pull requests*). Unrelated issues never share a pull request.
 - **Role at session start (owner, 2026-11-14; `docs/ROLE-START.md`)**: a session takes the role its start gives, in this
   order, the first present signal winning: the named agent (a Bive one: advisor, coordinator, delegate), `BIVE_ROLE`, the role file `.bive/state/role`, the worktree
   path `.worktrees/issue-<n>` (a delegate), an explicit launch hand-over or brief. Signals that disagree stop the session
@@ -130,7 +133,7 @@ Generic, whatever the language (owner, 2026-11-08, taken from the practice of th
   takes other than pushing its own branch (a comment, a label, a branch update, a re-run, a review) is preceded or
   carried by a comment signed with its role and model (`— <role> <provider/model>`), and an agent never acts on a pull
   request it does not own (another milestone's, another session's). A session started with an App token acts as
-  `bive-agents[bot]`, which tells agents from the owner; a session without one still acts as the owner's login. The
+  `bived-agents[bot]`, which tells agents from the owner; a session without one still acts as the owner's login. The
   signature and the Git author tell the roles apart in both cases (`docs/ACTORS.md`).
 - **Others complete, never edit, the role prompts**: the owner or the coordinator adds to a role in
   `.bive/prompts/project/<ROLE>.md`, which may narrow a rule but never loosen or contradict one; the core prompt wins.

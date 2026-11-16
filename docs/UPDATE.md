@@ -61,7 +61,7 @@ checks run. The owner merges it like any other.
 ## Paste into OpenCode at the project's root
 
 ```text
-Update this project's Bive from https://github.com/jcherfils/bive, in two turns, following docs/UPDATE.md of that
+Update this project's Bive from https://github.com/bived-apps/bive, in two turns, following docs/UPDATE.md of that
 repository. Turn 1, read only: write nothing. Never copy .bive/registry-id, .bive/state/, HANDOFF.md, ROADMAP.md or
 Bive's tests. Show what changed in Bive since the commit this project last took, the diff of every file here that would
 change, and, separately, what changed in the gate and in the guard. Keep opencode.jsonc, .bive/prompts/project/,

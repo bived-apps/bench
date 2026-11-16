@@ -247,6 +247,49 @@ if [ -n "$timed_out" ]; then
 fi
 ```
 
+## Setup and stop defaults (issue #254, owner 2026-11-15)
+
+The defaults in one place; each comes from a miss seen in a real run.
+
+- **Layout**: the coordinator in the project's checkout; each delegate in `.worktrees/issue-<n>` inside it (another
+  repository's clone also under `.worktrees/`, named in the hand-over, removed by the owner). Use absolute paths in
+  commands that `cd`: the guard resolves a relative path from the session's root, not from the `cd`.
+- **Start**: `opencode run --agent delegate --model <route> --title "issue-<n>" "$brief"`, its PID recorded. **Continue a
+  delegate only by its own session id**, found by that title (`opencode session list` in its worktree, the line whose
+  title names the issue), never "the first session listed": that can be the coordinator's own session.
+- **Concurrency**: at most three delegates at once, never two on overlapping files; one open pull request on prompt
+  files at a time (step 9).
+- **Retry**: a review fix goes back to the same session in one short message. A part that failed twice is split again
+  or raised at gate 2, not taken over. A refusal is a hard stop for the delegate: read it, then resume with one
+  message that says what was wrong with the command's shape.
+- **Model fallback**: on a model error, the next model of `.bive/models.json` **on another provider** when the error is
+  a shared pool's limit (all `opencode/…-free` models stopped together on 2026-11-15); set the worktree's Git name before
+  its next commit.
+- **Ask the owner**: anything a rule does not answer, any authority or enforcement file, a workflow's first run on a
+  self-hosted runner, an action under the owner's login, and every choice of design the owner will see. With fixed
+  choices, here in the session; a GitHub comment is not seen unless the owner asks for a watch.
+- **Stop with a hand-over**: when the model changes and is not listed for the role, when every model of the list
+  failed, when the owner is needed and absent, or at the end of a batch. The hand-over names what is merged, what is
+  open (with links), the running processes and wake-ups, and the owner's next step.
+
+## Batch pull requests (issue #254, owner 2026-11-15)
+
+One pull request per outcome, not per file. Fewer, bounded pull requests save the owner's touches (#336: 87 pull
+requests in two days, 17 of them state-only), without hiding unfinished work.
+
+- **When**: several issues that serve **one** outcome (the same rule, the same page, the same tool). Unrelated issues
+  never travel together; an authority file and an unrelated change never share a pull request.
+- **Branch**: `batch/<slug>` from the integration branch; each delegate still works one issue in its own worktree and
+  pushes `issue/<n>-<slug>`; the coordinator merges those branches into `batch/<slug>` (merge commits, every commit
+  keeps its author) and opens one pull request.
+- **Body**: the outcome in one line; one `Closes #N` line per issue; what is excluded; the acceptance checks run in
+  that turn; each delegate's report under its issue's heading.
+- **Scope cap**: at most 6 files changed besides tests, unless the owner raises it for that batch.
+- **State files ride along**: the `HANDOFF.md`, `ROADMAP.md` or `.bive/models.json` change a batch needs goes in
+  that batch's pull request, not in one of its own.
+- **Review**: the order of step 7, for each issue's part, then for the whole: does it deliver the one outcome, nothing
+  more?
+
 ## Open and review a pull request (step 7)
 
 The delegate pushes its branch and returns the filled report; it never opens a pull request. The coordinator creates

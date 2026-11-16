@@ -5,6 +5,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
 
+  // A session opened in this checkout starts as the coordinator (owner, 2026-11-15): OpenCode's own `build` is not a
+  // Bive role, and a session opened only for a question picks another agent (advisor, or none: AGENTS.md › Role).
+  "default_agent": "coordinator",
+
   // Schedules (#242, owner 2026-11-14): lets a coordinator be woken once when its handed-over pull request is merged
   // or closed (docs/COORDINATING.md › Be woken when a pull request is merged). Experimental OpenCode API.
   "experimental": {"schedules": true},

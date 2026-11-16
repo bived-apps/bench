@@ -8,9 +8,18 @@ import { parseGateOwner } from "../../../.github/scripts/merge-gate-lib.mjs"
 import { APPROVAL_LIFETIME_MS, APPROVAL_PREFIX, approvalBytes, changesMergeAuthority, matchingGrant,
   verifyParentApproval } from "../../../.github/scripts/coordinator-approval-lib.mjs"
 import { isAdvisor, isDelegate } from "./check.ts"
-import { runCoordinatorMerge, type MergeRequest, type MergeScope, type MergeSnapshot } from "./coordinator-merge.ts"
+import { runCoordinatorMerge, type MergeMode, type MergeRequest, type MergeScope, type MergeSnapshot } from "./coordinator-merge.ts"
 
 const TIMEOUT = 15_000
+const LABEL = /^bive-merge-authorized-until-(\d{4}-\d{2}-\d{2})$/
+// The latest end (exclusive, UTC) among the PR's dated authorization labels; NaN when none is well formed.
+export function labelExpiry(labels: unknown): number {
+  if (!Array.isArray(labels)) return NaN
+  const ends = labels.map((name) => typeof name === "string" ? LABEL.exec(name)?.[1] : undefined)
+    .filter((day): day is string => typeof day === "string")
+    .map((day) => Date.parse(`${day}T00:00:00Z`) + 86_400_000).filter(Number.isFinite)
+  return ends.length ? Math.max(...ends) : NaN
+}
 const unwrap = (value: any) => value && typeof value === "object" && "data" in value ? value.data : value
 function processOutput(command: string, args: string[], cwd: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -25,11 +34,13 @@ function processOutput(command: string, args: string[], cwd: string, signal?: Ab
 // Uses the documented OpenCode 2 tool/permission APIs; ctx's runtime is supplied by OpenCode.
 export async function registerCoordinatorMerge(ctx: any, root: string, role?: string, roleFile?: string,
   execute = processOutput): Promise<void> {
-  // Direct shell merges stay denied; this tool is the only merge path. No owner prompt per PR: the owner's grant is the proof.
+  // Direct shell merges stay denied; this tool is the only merge path. The base's gate.json names one mode (#344):
+  // `label` (the owner's dated label, then a fresh permission prompt per merge) or `grant` (the owner's signed grant,
+  // no prompt per merge). Each is enough alone; the tool never falls back from one to the other.
   await ctx.tool.transform((editor: any) => {
     editor.add({
       name: "bive_coordinator_merge",
-      description: "Owner opt-in only: approve and merge one direct sub-coordinator PR into an integration branch under the owner's grant on the base. Never main. Default off.",
+      description: "Owner opt-in only: merge one direct sub-coordinator PR into an integration branch, in the mode the base names (label: owner's dated label and a fresh prompt; grant: owner's signed grant). Never main. Default off.",
       input: {
         type: "object", additionalProperties: false,
         properties: { number: { type: "integer", minimum: 1 }, childSession: { type: "string", minLength: 1 } },
@@ -40,6 +51,7 @@ export async function registerCoordinatorMerge(ctx: any, root: string, role?: st
             || isDelegate(root, role, roleFile, context.agent)) {
           throw new Error("coordinator merge refused: only a coordinator may request owner opt-in")
         }
+        let mode: MergeMode | null = null
         let lastGrant: ReturnType<typeof matchingGrant> = null
         let lastApprovals = 0
         const run = (command: string, args: string[], cwd = root) => execute(command, args, cwd, context.signal)
@@ -54,6 +66,12 @@ export async function registerCoordinatorMerge(ctx: any, root: string, role?: st
           const owner = parseGateOwner(configText)
           // Opt-in requires an explicitly named human owner even in a personally owned repository.
           if (config?.coordinatorMerges !== true || !owner) throw new Error("coordinator merge refused: base owner opt-in is off or invalid")
+          const named = config.coordinatorMergeMode
+          if (named !== "label" && named !== "grant") {
+            throw new Error("coordinator merge refused: merge mode is missing or unknown (coordinatorMergeMode: label or grant)")
+          }
+          if (mode !== null && mode !== named) throw new Error(`[${mode}] coordinator merge refused: merge mode changed`)
+          mode = named
           const executor = unwrap(await ctx.session.get({ sessionID: context.sessionID }))
           const child = unwrap(await ctx.session.get({ sessionID: input.childSession }))
           const childDirectory = child?.location?.directory
@@ -74,8 +92,8 @@ export async function registerCoordinatorMerge(ctx: any, root: string, role?: st
               || a.name.includes(`[session=${context.sessionID}]`)
               || (a.name.startsWith("coordinator ") && !/\[session=ses_[A-Za-z0-9]+\]$/.test(a.name)))
           const gatePr = await readers.readPullRequest({ repository, number: input.number })
-          // Authority is the owner's grant on the protected BASE, never a label or a head-side file.
-          const grant = matchingGrant(configText, { repository, executor: context.sessionID, childSession: input.childSession,
+          // Grant mode: authority is the owner's grant on the protected BASE. Label mode ignores every grant.
+          const grant = mode !== "grant" ? null : matchingGrant(configText, { repository, executor: context.sessionID, childSession: input.childSession,
             headBranch: pr.headRefName, base: pr.baseRefName })
           const files = (JSON.parse(await run("gh", ["pr", "view", String(input.number), "--repo", repository, "--json", "files"])).files ?? [])
             .map((f: any) => f?.path)
@@ -90,22 +108,44 @@ export async function registerCoordinatorMerge(ctx: any, root: string, role?: st
           lastApprovals = grant ? comments.filter((c: any) => {
             try { return JSON.parse(String(c.body).slice(APPROVAL_PREFIX.length))?.payload?.grant === grant.id } catch { return false }
           }).length : 0
+          const checks = await readers.readChecks({ repository, number: input.number })
+          // Label mode: the owner's dated label, still valid today (UTC); the gate verifies who applied it and the head.
+          const dated = mode === "label" ? labelExpiry(gatePr.labels) : NaN
+          const gateGreen = checks.filter((c: any) => `${c.workflow} / ${c.name}` === "bive-merge-gate / merge-gate")
+            .every((c: any) => c.bucket === "pass") && checks.some((c: any) => `${c.workflow} / ${c.name}` === "bive-merge-gate / merge-gate")
           return {
+            mode,
             repository, number: pr.number, state: pr.state, head: pr.headRefOid, base: pr.baseRefName,
             headBranch: pr.headRefName, sameRepository: prInfo.sameRepository, coordinatorPR: prInfo.coordinatorPR,
-            enabled: true, owner, checks: await readers.readChecks({ repository, number: input.number }),
-            authorizationValid: grant !== null,
-            headApproved: approval !== null && approval.payload.executor === context.sessionID
+            enabled: true, owner, checks,
+            authorizationValid: mode === "label" ? Number.isFinite(dated) && dated > Date.now() : grant !== null,
+            headApproved: mode === "label" ? gateGreen : approval !== null && approval.payload.executor === context.sessionID
               && approval.payload.childSession === input.childSession,
-            grantExpiresAt: grant ? Date.parse(grant.expiresAt) : NaN,
+            grantExpiresAt: mode === "label" ? dated : grant ? Date.parse(grant.expiresAt) : NaN,
             authorityChange: changesMergeAuthority(files),
             selfAuthored,
             executor: { id: executor.id, agent: executor.agent },
             child: { id: child.id, agent: child.agent, parentID: child.parentID, branch, head: childHead },
           }
         }
-        const result = await runCoordinatorMerge(input, context.sessionID, {
+        const io = {
           read,
+          // Label mode: the owner's fresh OpenCode permission prompt for this exact scope. Nothing is saved for later
+          // calls, and the resource carries the head, so an approval never covers another head or PR.
+          ask: async (scope: MergeScope) => {
+            if (typeof ctx.permission?.assert !== "function") {
+              throw new Error("coordinator merge refused: no owner permission prompt available")
+            }
+            await ctx.permission.assert({
+              sessionID: context.sessionID, agent: context.agent,
+              source: { type: "tool", messageID: context.messageID, id: context.id },
+              action: "bive.coordinator.merge",
+              resources: [`${scope.repository}#${scope.number}@${scope.head}->${scope.base}`],
+              save: [],
+              metadata: { repository: scope.repository, number: scope.number, head: scope.head, base: scope.base,
+                executor: scope.executor, childSession: scope.childSession, expiresAt: new Date(scope.expiresAt).toISOString() },
+            })
+          },
           // Records the parent's signed approval of this exact head under the owner's grant; the owner is not asked per PR.
           approve: async (scope: MergeScope) => {
             const pem = process.env.BIVE_PARENT_APPROVAL_KEY
@@ -131,7 +171,16 @@ export async function registerCoordinatorMerge(ctx: any, root: string, role?: st
           },
           merge: (scope: MergeScope) => run("gh", ["pr", "merge", String(scope.number), "--repo", scope.repository,
             "--merge", "--match-head-commit", scope.head]),
-        })
+        }
+        let result: string
+        try {
+          result = await runCoordinatorMerge(input, context.sessionID, io)
+        } catch (error) {
+          // Every refusal after the base's mode is read names that mode first.
+          const message = error instanceof Error ? error.message : String(error)
+          if (mode === null || message.startsWith("[")) throw error
+          throw new Error(`[${mode}] ${message}`, { cause: error })
+        }
         return { content: result || "Owner-opted-in sub-coordinator merge completed." }
       },
     })

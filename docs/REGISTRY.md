@@ -22,6 +22,9 @@ Bive asks in return; the licence (MIT) does not require it.
   `.bive/registry-id`. That id is the app's unique identifier: commit it so every clone
   and worktree reports as one app, and never copy it from another project (a template copy has none). Nothing else: no project name, repository, path, text or date (the
   server sets the day).
+- **Violations are reported once per process**: sessions that share one OpenCode process share the guard's counter and
+  the reported part (field report, 2026-11-16). Before this fix, each new session reported the running total again, so a day when
+  many sessions shared one process shows too many violations: read those counts as upper bounds.
 - **What is kept**: one row per report (id, day, the four numbers) and one per agent and model. The server never reads or stores the IP
   address; the public page shows projects as #1, #2… and never their id.
 - **What is shown**: only projects that reported at least three sessions on two different days, and the server

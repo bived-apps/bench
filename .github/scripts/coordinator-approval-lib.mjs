@@ -23,6 +23,8 @@ export function readCoordinatorGrants(text) {
   try { policy = JSON.parse(text) } catch { return [] }
   if (policy?.coordinatorMerges !== true || typeof policy.owner !== "string" || !policy.owner
       || !Array.isArray(policy.coordinatorMergeGrants)) return []
+  // Label mode (#344) ignores every grant: only the owner's dated label authorizes, never a signed approval.
+  if (policy.coordinatorMergeMode === "label") return []
   const ids = policy.coordinatorMergeGrants.map((grant) => grant?.id)
   if (new Set(ids).size !== ids.length) return []
   return policy.coordinatorMergeGrants.filter((grant) => {

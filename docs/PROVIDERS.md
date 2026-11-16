@@ -100,6 +100,11 @@ or unreadable, use the canonical ID and tell the owner. Keep the canonical model
 identity (`git config --worktree user.name`) as required by `AGENTS.md`; when useful, report both the canonical and
 resolved IDs.
 
+The token counter sends the registry the canonical name, which it finds from this file read backwards. Without a match,
+a `claude-agent/` route still gets Anthropic's name: `claude-agent/opus`, `sonnet`, `haiku` and `fable` map to the
+versions that provider labels them with (`CLAUDE_AGENT_SHORT` in `.opencode/plugins/token-ratio/lib.ts`), and
+`claude-agent/claude-…` maps to `anthropic/claude-…`. When a family gets a new version, update that table.
+
 OpenCode configuration can add or override model IDs under a provider, and `modelID` can change the ID sent to that
 provider. That is useful when only the upstream model ID differs. It does not directly alias a canonical
 `provider/model` reference to a different OpenCode provider/model pair, so use the local map when provider IDs differ.

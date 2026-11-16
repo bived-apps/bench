@@ -6,7 +6,7 @@ coordinator from a delegate (that stays with the guard, the role file and signed
 
 ## What exists (2026-11-14)
 
-- App slug `bive-agents`, App ID 5761164 (public), owned by bived-apps, installed on bived-apps/bive only.
+- App slug `bived-agents`, App ID 5761164 (public), owned by bived-apps, installed on bived-apps/bive only.
 - Permissions: contents, issues, pull requests (write); actions, checks, metadata (read); no events.
 - The private key is kept in the owner's password manager, nowhere on disk.
 - `main` ruleset has Restrict updates and the Repository admin role as the only bypass, for pull requests only; no App
@@ -14,7 +14,8 @@ coordinator from a delegate (that stays with the guard, the role file and signed
 
 ## Tests passed
 
-- An agent comment shows as `bive-agents[bot]` (type Bot).
+- An agent comment shows as [`bived-agents[bot]`](https://github.com/apps/bived-agents) (type Bot; an App has no
+  user profile, so `github.com/bived-agents[bot]` is not a page).
 - A dated label applied with the App token (by the owner, on scratch PR #300) was refused by bive-merge-gate.
 - The owner's own label passes (every merged PR).
 
@@ -58,7 +59,7 @@ installed on each account.
 **D, the Desktop service.** `bive-desktop setup` points the OpenCode background service at the shims (`PATH` first,
 and the git credential helper for `https://github.com`, preceded by an empty helper value that resets the owner's own
 keychain helper) and restarts it; `bive-desktop undo` removes them. Run it from the owner's own terminal: it restarts
-the service the sessions run in. Every Desktop session then acts as `bive-agents[bot]`, and a `git push` from a
+the service the sessions run in. Every Desktop session then acts as `bived-agents[bot]`, and a `git push` from a
 Desktop session is pushed by the App.
 
 Not yet proven live: the owner's own tests (a Desktop session comments as the App, a push shows the App as the

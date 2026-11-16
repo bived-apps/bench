@@ -4,17 +4,25 @@ Generic to **any app made with Bive**, not a repository-specific privilege. The 
 authority. A coordinator may execute one named direct sub-coordinator PR merge only through the opt-in path below.
 An advisor has no workflow privileges; a qualification is capability evidence, never a grant.
 
-## Default off; two owner decisions
+## Default off; one opt-in, then one of two modes (owner, 2026-11-15, #344)
 
-1. The app's human owner explicitly opts in, through a reviewed change to `.bive/gate.json` on the PR's **base**:
-   `{"owner": "<human login>", "skippable": [], "coordinatorMerges": true}`.
-   Missing, invalid or false means disabled. Bive ships `false`; this task does not enable it.
-2. For each specific merge, the owner applies the normal dated PR authorization, waits for required checks and the
-   gate to pass, then approves the exact-scope OpenCode permission prompt from `bive_coordinator_merge`.
-   No automatic or saved standing approval: the plugin forces a fresh question even if an inherited rule says allow.
-   Explicit deny rules still win.
+1. The app's human owner explicitly opts in, through a reviewed change to `.bive/gate.json` on the PR's **base**,
+   naming one mode: `{"owner": "<human login>", "skippable": [], "coordinatorMerges": true,
+   "coordinatorMergeMode": "label"}` (or `"grant"`). Missing, invalid or false `coordinatorMerges` means disabled; a
+   missing or unknown mode is refused. Bive ships `false`; this task does not enable it.
+2. Each mode is enough on its own; the tool runs only the named mode's checks and never falls back to the other. Every
+   refusal after the mode is read starts with it: `[label] …` or `[grant] …`.
+   - **`label`, one merge at a time**: the owner applies the normal dated PR authorization
+     (`bive-merge-authorized-until-YYYY-MM-DD`, still valid today in UTC) and waits for the required checks and the
+     gate to pass; the tool then asks the exact-scope OpenCode permission prompt (`bive.coordinator.merge`, `ask` in
+     `opencode.jsonc`), which the owner answers. Before the gate is green it neither prompts nor merges. Nothing is
+     saved for a later call (`save: []`), and the prompt's resource carries the head. Explicit deny rules still win;
+     an `allow` rule for `bive.coordinator.merge` would skip the prompt, so keep it `ask`. Grants on the base are
+     ignored, by the tool and by the gate.
+   - **`grant`, a listed batch**: the signed grant below; no prompt for each merge. A dated label alone does not
+     authorize in this mode.
 
-The prompt names repository, PR, exact head, base, executing coordinator session, direct sub-coordinator session and
+In `label` mode the prompt names repository, PR, exact head, base, executing coordinator session, direct sub-coordinator session and
 expiry (two minutes from request preparation). It covers only that tool invocation. Reject it if you are not the app's
 human owner, the request is incomplete, or the scope is not the work you intend to authorize. Silence is not consent.
 An owner asking for advice, saying "coordinator decides", or approving a team does not issue this merge permission.
@@ -41,7 +49,7 @@ authorship and the owner authorization's latest label event, and reruns the gate
 except the existing inviolable-check skip on a `coordinator` PR. Owner overrides do not let this tool merge red,
 missing or pending checks.
 
-After the owner answers the permission prompt, it reads the scope, opt-in, labels and checks again. Changed head/base,
+After the owner answers the permission prompt (`label`) or the parent's approval is recorded (`grant`), it reads the scope, opt-in, labels and checks again. Changed head/base,
 owner, relationship, branch, expired/revoked authorization or timeout refuses the operation. It executes only
 `gh pr merge --merge --match-head-commit <head>`, with the exact repository and PR. A second invocation needs a new
 owner decision; a merged/closed PR is ineligible. Removing the authorization or disabling base opt-in revokes pending
@@ -71,7 +79,7 @@ Install/update this feature from reviewed Bive source, including the protected g
 Do not copy grants, permissions, session IDs or another app's owner identity into a new installation. Opt-in remains
 an independent decision by each app's owner.
 
-## Main is the owner's alone; parent approval of direct children (owner, 2026-11-13)
+## Main is the owner's alone; `grant` mode: parent approval of direct children (owner, 2026-11-13)
 
 - No agent approves or merges into `main`, under any grant. The code refuses it (`coordinator-merge.ts`) and the
   grant reader ignores any grant whose base is not `bived` or `milestone/<name>`.
@@ -87,3 +95,7 @@ an independent decision by each app's owner.
   gate (`check-merge-gate.mjs` accepts the approval instead of the dated label, `tests/gate-parent-approval.test.ts`).
   Verified offline end to end (owner's choice, 2026-11-14): `tests/coordinator-merge-tool.test.ts` runs the real tool, signing,
   grant lookup and gate against a fake GitHub. Not verified live on GitHub. Opt-in stays off (`coordinatorMerges: false`) and no grant exists.
+- `label` mode (#344): implemented and tested offline (`tests/coordinator-merge-tool.test.ts`, the label tests), and
+  verified live once on 2026-11-15 on a scratch repository: a child coordinator's PR, the owner's dated label, a green
+  gate, the owner's yes at the prompt, then a merge commit by the App. Not tested live: the owner's *no*, and `grant` mode.
+  The tool checks Bive's own CI names and never merges into `main` (#395).
