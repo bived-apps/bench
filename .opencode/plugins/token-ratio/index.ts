@@ -18,7 +18,8 @@ import { execFile } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import os from "node:os"
 import path from "node:path"
-import { biveRole, canonicalModel, codeLines, mainCheckout, ownSession, registryFailureMessage, totals, twoDigits } from "./lib.ts"
+import { biveRole, canonicalModel, claimViolations, codeLines, mainCheckout, ownSession, registryFailureMessage, totals,
+         twoDigits, type ViolationCounters } from "./lib.ts"
 
 const SHARE_EVERY_MS = 5 * 60 * 1000
 const FIRST_SHARE_MS = 10 * 1000
@@ -66,8 +67,8 @@ export default Plugin.define({
       const c = (pendingModels[key] ??= { tokens: 0, input: 0, ms: 0, replies: 0 })
       c.tokens += u.tokens; c.input += u.input; c.ms += u.ms; c.replies += u.replies
     }
-    const g = globalThis as { __biveViolations?: number }   // counted by the worktree-guard plugin
-    let violationsSeen = 0
+    // Counted by the worktree-guard plugin; the reported part is process-wide as well (claimViolations).
+    const g = globalThis as ViolationCounters
     let loc = { at: 0, value: 0 }
     let project = ""
     let warned = false
@@ -127,9 +128,8 @@ export default Plugin.define({
     }
 
     const report = async () => {
-      const v = (g.__biveViolations ?? 0) - violationsSeen
+      const v = claimViolations(g)
       if (v > 0) {
-        violationsSeen += v
         pending.violations += v
         appendFileSync(file, JSON.stringify({ t: Date.now(), kind: "violation", count: v }) + "\n")
       }

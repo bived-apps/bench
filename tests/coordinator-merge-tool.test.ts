@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import test, { after } from "node:test"
-import { APPROVAL_LIFETIME_MS, APPROVAL_PREFIX, approvalBytes } from "../.github/scripts/coordinator-approval-lib.mjs"
+import { APPROVAL_LIFETIME_MS, APPROVAL_PREFIX, approvalBytes, readCoordinatorGrants } from "../.github/scripts/coordinator-approval-lib.mjs"
 import { registerCoordinatorMerge } from "../.opencode/plugins/worktree-guard/merge-tool.ts"
 import { runMergeGate } from "../.github/scripts/check-merge-gate.mjs"
 
@@ -68,7 +68,7 @@ function createEnv(overrides: any = {}) {
     sha: SHA,
     repository: REPOSITORY,
     grant,
-    gateConfig: { owner: "human", coordinatorMerges: true, skippable: [], coordinatorMergeGrants: [grant] },
+    gateConfig: { owner: "human", coordinatorMerges: true, coordinatorMergeMode: "grant", skippable: [], coordinatorMergeGrants: [grant] },
     pr: {
       number: 123,
       state: "OPEN",
@@ -332,7 +332,7 @@ test("denies when human owner is missing", async () => {
 })
 
 test("denies when the base lists no grants", async () => {
-  await refused(createEnv({ gateConfig: { owner: "human", coordinatorMerges: true, coordinatorMergeGrants: [] } }),
+  await refused(createEnv({ gateConfig: { owner: "human", coordinatorMerges: true, coordinatorMergeMode: "grant", coordinatorMergeGrants: [] } }),
     /current owner authorization is missing, expired or revoked/)
 })
 
@@ -621,4 +621,101 @@ test("simulation: the same approval does not pass when the PR touches authority 
   await assert.rejects(gateFor(env, [posted], { base: "main" }), /only runs for pull requests targeting bived or milestone/)
   await assert.rejects(gateFor(env, [posted], { config: { ...env.S.gateConfig, coordinatorMerges: false } }), /dated merge-authorization label/)
   await assert.rejects(gateFor(env, []), /dated merge-authorization label/)
+})
+
+// Label mode (#344): the owner's dated label and a fresh permission prompt per merge; no grant, no key.
+const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10)
+function labelEnv(overrides: any = {}, answer: "yes" | "no" = "yes") {
+  const env = createEnv({
+    gateConfig: { owner: "human", coordinatorMerges: true, coordinatorMergeMode: "label", skippable: [] },
+    gatePr: { baseRefName: BASE, headRefOid: SHA, labels: ["coordinator", `bive-merge-authorized-until-${day(0)}`] },
+    ...overrides,
+  })
+  env.S.asks = []
+  env.ctx.permission = {
+    assert: async (request: any) => {
+      env.S.asks.push(request)
+      if (typeof env.S.mutateOnAsk === "function") env.S.mutateOnAsk(env.S)
+      if (answer === "no") throw new Error("permission rejected")
+    },
+  }
+  return env
+}
+
+test("refuses an opt-in that names no merge mode", async () => {
+  await refused(createEnv({ gateConfig: { owner: "human", coordinatorMerges: true, coordinatorMergeGrants: [] } }),
+    /merge mode is missing or unknown/)
+})
+
+test("refuses an unknown merge mode", async () => {
+  await refused(createEnv({ gateConfig: { owner: "human", coordinatorMerges: true, coordinatorMergeMode: "both" } }),
+    /merge mode is missing or unknown/)
+})
+
+test("label mode: dated label, green gate and the owner's yes merge the pinned head", async () => {
+  const env = labelEnv()
+  const tool = await register(env)
+  await tool.execute({ number: 123, childSession: CHILD }, contextFor(env))
+  assert.equal(env.S.asks.length, 1)
+  const ask = env.S.asks[0]
+  assert.equal(ask.action, "bive.coordinator.merge")
+  assert.deepEqual(ask.resources, [`${REPOSITORY}#123@${SHA}->${BASE}`])
+  assert.deepEqual(ask.save, [])
+  assert.equal(ask.metadata.head, SHA)
+  assert.equal(env.S.commentCalls.length, 0, "label mode never posts a signed approval")
+  assert.equal(env.S.mergeCalls.length, 1)
+  assert.deepEqual(env.S.mergeCalls[0].args.slice(-2), ["--match-head-commit", SHA])
+})
+
+test("label mode: a gate not yet green neither prompts nor merges", async () => {
+  const env = labelEnv({ checks: pendingGate() })
+  const tool = await register(env)
+  const result = await tool.execute({ number: 123, childSession: CHILD }, contextFor(env))
+  assert.match(String(result.content), /No merge performed/)
+  assert.equal(env.S.asks.length, 0)
+  assert.equal(env.S.mergeCalls.length, 0)
+})
+
+test("label mode: no dated label is refused, named by its mode", async () => {
+  const env = labelEnv({ gatePr: { baseRefName: BASE, headRefOid: SHA, labels: ["coordinator"] } })
+  await refused(env, /^Error: \[label\] coordinator merge refused: current owner authorization is missing/)
+  assert.equal(env.S.asks.length, 0)
+})
+
+test("label mode: yesterday's label is refused", async () => {
+  const env = labelEnv({ gatePr: { baseRefName: BASE, headRefOid: SHA, labels: ["coordinator", `bive-merge-authorized-until-${day(-1)}`] } })
+  await refused(env, /\[label\].*current owner authorization is missing/)
+})
+
+test("label mode: the owner's no is a refusal", async () => {
+  const env = labelEnv({}, "no")
+  await refused(env, /\[label\] permission rejected/)
+  assert.equal(env.S.asks.length, 1)
+})
+
+test("label mode: a head that moves during the prompt is refused", async () => {
+  const env = labelEnv()
+  env.S.mutateOnAsk = (S: any) => { S.pr.headRefOid = OTHER_SHA; S.childHead = OTHER_SHA; S.gatePr.headRefOid = OTHER_SHA }
+  await refused(env, /\[label\].*(scope changed|branch or head changed)/)
+})
+
+test("label mode: no permission prompt available is a refusal", async () => {
+  const env = labelEnv()
+  env.ctx.permission = undefined
+  await refused(env, /\[label\].*no owner permission prompt available/)
+})
+
+test("label mode ignores a grant and its signed approval", async () => {
+  const grant = makeGrant()
+  const env = labelEnv({ grant, gatePr: { baseRefName: BASE, headRefOid: SHA, labels: ["coordinator"] } })
+  env.S.gateConfig.coordinatorMergeGrants = [grant]
+  env.S.comments.push(approvalComment(env))
+  await refused(env, /\[label\].*current owner authorization is missing/)
+  assert.equal(readCoordinatorGrants(JSON.stringify(env.S.gateConfig)).length, 0, "the gate ignores grants in label mode")
+})
+
+test("grant mode ignores the dated label", async () => {
+  const env = createEnv({ gatePr: { baseRefName: BASE, headRefOid: SHA, labels: ["coordinator", `bive-merge-authorized-until-${day(0)}`] } })
+  env.S.gateConfig.coordinatorMergeGrants = []
+  await refused(env, /^Error: \[grant\] coordinator merge refused: current owner authorization is missing/)
 })

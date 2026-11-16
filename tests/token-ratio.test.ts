@@ -76,7 +76,7 @@ test("the plugin warns once with that message and the docs carry the troubleshoo
 })
 
 // #376: the registry counts per Bive role and canonical model.
-import { biveRole, canonicalModel } from "../.opencode/plugins/token-ratio/lib.ts"
+import { biveRole, canonicalModel, claimViolations } from "../.opencode/plugins/token-ratio/lib.ts"
 describe("biveRole", () => {
   test("a Bive agent wins, then BIVE_ROLE, then the role file, then a delegate's worktree", () => {
     assert.equal(biveRole("coordinator", undefined, undefined, "/w/bive"), "coordinator")
@@ -95,9 +95,39 @@ describe("canonicalModel", () => {
   test("a known route gives its canonical name", () => {
     assert.equal(canonicalModel("claude-agent/opus", aliases), "anthropic/claude-opus-5-5")
   })
-  test("an unknown route, a missing or a corrupt file give the route back", () => {
+  test("an unknown route gives the route back", () => {
     assert.equal(canonicalModel("opencode-go/beam-free", aliases), "opencode-go/beam-free")
-    assert.equal(canonicalModel("claude-agent/opus", undefined), "claude-agent/opus")
-    assert.equal(canonicalModel("claude-agent/opus", "{not json"), "claude-agent/opus")
+    assert.equal(canonicalModel("opencode-go/beam-free", undefined), "opencode-go/beam-free")
+    assert.equal(canonicalModel("claude-agent/mystery", undefined), "claude-agent/mystery")
+    assert.equal(canonicalModel("", aliases), "")
+  })
+  test("claude-agent routes get Anthropic's name without an alias file, or with a corrupt one", () => {
+    assert.equal(canonicalModel("claude-agent/opus", undefined), "anthropic/claude-opus-5-5")
+    assert.equal(canonicalModel("claude-agent/haiku", aliases), "anthropic/claude-haiku-5-5")
+    assert.equal(canonicalModel("claude-agent/sonnet", "{not json"), "anthropic/claude-sonnet-5-5")
+    assert.equal(canonicalModel("claude-agent/fable", undefined), "anthropic/claude-fable-5-2")
+    assert.equal(canonicalModel("claude-agent/claude-opus-5", undefined), "anthropic/claude-opus-5")
+  })
+  test("the alias file wins over the built-in names", () => {
+    const own = JSON.stringify({ aliases: { "anthropic/claude-opus-6": "claude-agent/opus" } })
+    assert.equal(canonicalModel("claude-agent/opus", own), "anthropic/claude-opus-6")
+  })
+})
+
+describe("claimViolations (field report, 2026-11-16)", () => {
+  test("sessions sharing one process report each refusal once", () => {
+    const g: { __biveViolations?: number, __biveViolationsReported?: number } = {}
+    assert.equal(claimViolations(g), 0)                  // nothing refused yet
+    g.__biveViolations = 225
+    assert.equal(claimViolations(g), 225)                // the first session's report
+    assert.equal(claimViolations(g), 0)                  // a new session (another plugin instance) reports nothing again
+    g.__biveViolations = 230
+    assert.equal(claimViolations(g), 5)                  // only the refusals since the last report
+    assert.equal(claimViolations(g), 0)
+  })
+  test("the plugin claims through the process-wide helper, not a per-instance counter", () => {
+    const src = readFileSync(new URL("../.opencode/plugins/token-ratio/index.ts", import.meta.url), "utf8")
+    assert.match(src, /claimViolations\(g\)/)
+    assert.doesNotMatch(src, /violationsSeen/)
   })
 })

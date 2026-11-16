@@ -87,14 +87,40 @@ export function biveRole(agent: string, envRole: string | undefined, roleFile: s
 }
 
 // The canonical model of a route, through the local alias file `.bive/state/models.local.json` read backwards
-// ({"aliases": {canonical: route}}, docs/PROVIDERS.md). An unreadable file or an unknown route gives the route back.
+// ({"aliases": {canonical: route}}, docs/PROVIDERS.md). The file wins. Without a match, a `claude-agent/` route still
+// gets Anthropic's name: a versioned id (`claude-agent/claude-opus-5`) maps to `anthropic/<id>`, and a short name
+// through CLAUDE_AGENT_SHORT. Any other unknown route, or an unreadable file, gives the route back.
+// The claude-agent provider's short names, as it labels them (checked 2026-11-16: Opus 5.5, Sonnet 5.5, Haiku 5.5,
+// Fable 5.2). When a family gets a new version, update this table and its test in the same commit.
+export const CLAUDE_AGENT_SHORT: Record<string, string> = {
+  opus: "anthropic/claude-opus-5-5", sonnet: "anthropic/claude-sonnet-5-5",
+  haiku: "anthropic/claude-haiku-5-5", fable: "anthropic/claude-fable-5-2",
+}
 export function canonicalModel(route: string, aliasesText: string | undefined): string {
-  if (!route || !aliasesText) return route
-  try {
-    const aliases = (JSON.parse(aliasesText) as { aliases?: Record<string, unknown> }).aliases ?? {}
-    for (const [canonical, alias] of Object.entries(aliases)) if (alias === route) return canonical
-  } catch {
-    return route   // a corrupt alias file is the owner's to fix; the route is still a true name
+  if (!route) return route
+  if (aliasesText) {
+    try {
+      const aliases = (JSON.parse(aliasesText) as { aliases?: Record<string, unknown> }).aliases ?? {}
+      for (const [canonical, alias] of Object.entries(aliases)) if (alias === route) return canonical
+    } catch {
+      // A corrupt alias file is the owner's to fix; fall through to the built-in names.
+    }
   }
-  return route
+  const m = /^claude-agent\/(.+)$/.exec(route)
+  if (!m) return route
+  if (m[1].startsWith("claude-")) return `anthropic/${m[1]}`
+  return CLAUDE_AGENT_SHORT[m[1]] ?? route
+}
+
+// The guard's refusals not yet reported, claimed once per process. The worktree-guard plugin counts every refusal in
+// one process-wide counter (`__biveViolations`); the reported part must be process-wide too, or each new session's
+// plugin instance would start at 0 and report the whole running total again (a field report: 230 refusals reported as
+// about 10,000 when some sixty sessions shared one process). Returns the new refusals and marks them reported.
+export type ViolationCounters = { __biveViolations?: number, __biveViolationsReported?: number }
+export function claimViolations(g: ViolationCounters): number {
+  const total = g.__biveViolations ?? 0
+  const reported = g.__biveViolationsReported ?? 0
+  const fresh = total > reported ? total - reported : 0
+  g.__biveViolationsReported = Math.max(total, reported)
+  return fresh
 }

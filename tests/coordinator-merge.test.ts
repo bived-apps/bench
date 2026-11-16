@@ -33,6 +33,7 @@ function baseSnapshot(overrides: Partial<MergeSnapshot> = {}): MergeSnapshot {
     headBranch: HEAD_BRANCH,
     sameRepository: true,
     coordinatorPR: true,
+    mode: "grant",
     enabled: true,
     owner: "human",
     checks: [

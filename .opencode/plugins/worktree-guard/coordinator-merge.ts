@@ -1,6 +1,9 @@
 // Owner opt-in execution, not supervisory authority. The shell merge denial stays in place.
 // All I/O is injected so tests never authorize or perform a real merge.
+export type MergeMode = "label" | "grant"
 export type MergeSnapshot = {
+  // label: the owner's dated label and a fresh permission prompt per merge; grant: the owner's signed grant (#344).
+  mode: MergeMode
   repository: string
   number: number
   state: string
@@ -30,6 +33,8 @@ export type MergeIO = {
   read: () => Promise<MergeSnapshot>
   // Parent approval under an existing, protected-base owner grant; never a fresh owner grant.
   approve: (scope: MergeScope, owner: string) => Promise<void>
+  // Label mode only: the owner's fresh OpenCode permission prompt for this exact scope; rejects unless answered yes.
+  ask?: (scope: MergeScope, owner: string) => Promise<void>
   merge: (scope: MergeScope) => Promise<string>
   now?: () => number
 }
@@ -66,6 +71,13 @@ function valid(snapshot: MergeSnapshot, request: MergeRequest, executor: string)
         && snapshot.coordinatorPR && c.bucket === "skipping"))) reject("a check is not green")
 }
 
+function gatePassed(snapshot: MergeSnapshot): boolean {
+  const gate = snapshot.checks.filter((c) => `${c.workflow} / ${c.name}` === "bive-merge-gate / merge-gate")
+  return gate.length === 1 && gate[0].bucket === "pass"
+}
+const knownMode = (snapshot: MergeSnapshot): MergeMode | null =>
+  snapshot.mode === "label" || snapshot.mode === "grant" ? snapshot.mode : null
+
 export async function runCoordinatorMerge(request: MergeRequest, executor: string, io: MergeIO): Promise<string> {
   const now = io.now ?? Date.now
   const first = await io.read()
@@ -73,19 +85,27 @@ export async function runCoordinatorMerge(request: MergeRequest, executor: strin
   if (now() >= first.grantExpiresAt) throw new Error("coordinator merge refused: owner grant expired")
   const scope: MergeScope = { repository: first.repository, number: first.number, head: first.head, base: first.base, headBranch: first.headBranch,
     executor, childSession: request.childSession, expiresAt: Math.min(now() + 120_000, first.grantExpiresAt) }
-  if (!first.headApproved) await io.approve(scope, first.owner)
+  if (first.mode !== knownMode(first)) throw new Error("coordinator merge refused: merge mode is missing or unknown")
+  if (first.mode === "label") {
+    // The gate is green only on the owner's dated label at this head; the owner then answers the prompt.
+    if (!gatePassed(first)) return "Waiting for the owner's dated label and bive-merge-gate on this head; invoke again once green. No merge performed."
+    if (typeof io.ask !== "function") throw new Error("coordinator merge refused: no owner permission prompt available")
+    await io.ask(scope, first.owner)
+  } else if (!first.headApproved) await io.approve(scope, first.owner)
   if (!Number.isFinite(now()) || now() >= scope.expiresAt) throw new Error("coordinator merge refused: one-call grant expired")
   // Owner can revoke by disabling opt-in on base or removing PR authorization while the prompt is open.
   const latest = await io.read()
   valid(latest, request, executor)
+  if (latest.mode !== first.mode) throw new Error("coordinator merge refused: merge mode changed")
   if (latest.repository !== scope.repository || latest.head !== scope.head || latest.base !== scope.base
       || latest.owner !== first.owner || now() >= scope.expiresAt) {
     throw new Error("coordinator merge refused: scope changed or one-call grant expired")
   }
   if (now() >= latest.grantExpiresAt) throw new Error("coordinator merge refused: owner grant expired")
-  const gate = latest.checks.filter((c) => `${c.workflow} / ${c.name}` === "bive-merge-gate / merge-gate")
-  if (!latest.headApproved || gate.length !== 1 || gate[0].bucket !== "pass") {
-    return "Parent head approval recorded; wait for bive-merge-gate, then invoke again. No merge performed."
+  if (!latest.headApproved || !gatePassed(latest)) {
+    return latest.mode === "label"
+      ? "bive-merge-gate is not green on this head; no merge performed."
+      : "Parent head approval recorded; wait for bive-merge-gate, then invoke again. No merge performed."
   }
   // Parent approvals never extend the owner's bounded grant. GitHub also checks the head.
   return io.merge(scope)
