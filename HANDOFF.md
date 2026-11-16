@@ -4,8 +4,8 @@ What anyone picking up the work needs to know. Kept current by the coordinator, 
 
 ## Goal
 
-Bive is a repository template for building software with LLM agents in three roles (supervisor, coordinator,
-delegates) on OpenCode 2, with two small plugins: a guard that refuses writes outside the session's worktree and a
+Bive is a repository template for building software with LLM agents in roles (owner, advisor,
+coordinator, delegates) on OpenCode 2, with two small plugins: a guard that refuses writes outside the session's worktree and a
 counter of human and agent tokens. Bive develops itself with its own flow, so this repository is both the template
 and its first example.
 
@@ -36,41 +36,36 @@ the template that a role or a human does not read during a task.
   `BIVE_ROLE=delegate opencode run --agent delegate --model <model>`, run from `.worktrees/issue-<n>`
   (`docs/COORDINATING.md` › Start a delegate). The `delegate` agent of `opencode.jsonc` has
   `.bive/prompts/DELEGATE.md` as its system prompt (#84).
-- The supervisor is the owner with their Claude project (`.bive/prompts/SUPERVISOR.md`).
-- The supervisor's session (the owner's Claude project) is started with: "You are the supervisor of bive. Read
-  AGENTS.md, HANDOFF.md, ROADMAP.md, then .bive/prompts/SUPERVISOR.md: it is your prompt. You merge pull requests
-  into bived with `gh pr merge --merge --match-head-commit <sha>` once the coordinator has approved them, I have
-  applied the dated label and `bive-merge-gate / merge-gate` is green; you start the coordinators (at most two, one per
-  milestone) and arbitrate shared files; you never brief, review line by line, or write code."
+- The owner merges pull requests with `gh pr merge --merge --match-head-commit <sha>` once the coordinator has
+  approved them, the owner's dated label is applied and `bive-merge-gate / merge-gate` is green; the owner starts the
+  coordinators (at most two, one per milestone) and arbitrates shared files.
+- An advisor (`.bive/prompts/ADVISOR.md`, the `advisor` agent of `opencode.jsonc`) answers read-only questions and
+  recommends teams (`.bive/prompts/project/ADVISOR.md`); advice is not authorization.
 
 ## Decisions
 
 - **Owner-approved coordinator teams (owner, 2026-11-13)**: prefer the strongest suitable verified-free usable
-  coordinator; otherwise recommend a suitable usable coordinator from the current supervisor provider. Before launch
-  or substitution, ask the owner to approve the concrete team, cost, availability evidence, alternatives, and fallback,
-  then stop and wait. No silent coordinator substitution or inference that unknown pricing is free. Existing
+  coordinator; otherwise recommend a suitable usable coordinator from the current session's provider. Before launch
+  or substitution, the owner approves the concrete team, cost, availability evidence, alternatives, and fallback;
+  the session stops and waits. No silent coordinator substitution or inference that unknown pricing is free. Existing
   qualifications, allow-lists, delegate fallback, and role rights remain unchanged. See `docs/PROVIDERS.md` and the
-  supervisor's project additions.
-- **Roles separated (owner, 2026-11-09)**: the supervisor alone merges or closes a pull request (integration branch
+  advisor's project additions (`.bive/prompts/project/ADVISOR.md`, 2026-11-16).
+- **Roles separated (owner, 2026-11-09)**: the owner alone merges or closes a pull request (integration branch
   and `main`), with a merge commit; the coordinator reviews and approves, never merges, closes, pushes to the
   integration branch, or writes product code; the delegate writes. One role per session: whoever merges did not
-  write. This replaces the decisions of 2026-11-09 on supervisor operational work and delegated merge rights.
+  write. This replaces the earlier decisions of 2026-11-09 on delegated merge rights.
 - **"Ready to merge" is the hand-over (owner, 2026-11-10, #86)**: while coordinator and owner share one GitHub account,
   GitHub refuses the coordinator's approval; its `Ready to merge` comment with the checks it ran replaces it. No second
   account or GitHub App.
-- **Merge gate kept as a check (owner, 2026-11-09)**: #70's `bive-merge-gate / merge-gate` stays, on the supervisor's
-  merge: the owner applies `bive-merge-authorized-until-YYYY-MM-DD` to one approved pull request, and the supervisor
+- **Merge gate kept as a check (owner, 2026-11-09)**: #70's `bive-merge-gate / merge-gate` stays, on the owner's
+  merge: the owner applies `bive-merge-authorized-until-YYYY-MM-DD` to one approved pull request and
   merges it once the gate is green, pinned to its head (`--match-head-commit`). Red before the label means waiting
   for the owner. Branch protection requiring the gate and `bive-tests / tests` is the owner's, in GitHub (#85).
 - **Several coordinators (owner, 2026-11-09)**: one coordinator per milestone branch, at most two at once, each in its
-  own clone, started by the supervisor with the launch prompt below (milestone, branch and model filled in) and logged
+  own clone, started by the owner with the launch prompt below (milestone, branch and model filled in) and logged
   here. Each approves only pull requests based on its branch; the gate covers `bived` and `milestone/<name>`. At gate 1
-  each milestone lists its files and the supervisor arbitrates overlaps (one writer or an order, see #72); at most one
+  each milestone lists its files and the owner arbitrates overlaps (one writer or an order, see #72); at most one
   open `coordinator` pull request on the inviolable files at a time (#88).
-- **A supervisor may be an agent (owner, 2026-11-09)**: a person with their own Claude project, or an agent that passed
-  the owner-administered test of `.bive/templates/supervisor-test.md` (every trap refused, the right pull request
-  merged); the pass is logged here per model and version. Superseded for where it is logged and for what counts by
-  the entry of 2026-11-13 below.
 - **Validation on the latest released version; version 0 (owner, 2026-11-13)**: a role requires a validation on the
   latest released version of its test, never on the version in development. Version 0 is the owner's baseline, a
   decision and not a passed draw: `anthropic/claude-fable-5-1`, `anthropic/claude-fable-5-2`, `openai/gpt-6.1-sol` and
@@ -80,7 +75,7 @@ the template that a role or a human does not read during a task.
   name whatever provider served it, and passes or fails once. Each role looks for the least costly agent able to hold
   the role below it, with the owner's approval of the team. Validations, draws, names and approved teams are in
   `RESULTS.md`, no longer here.
-- **Supervisor test v1, three draws, none qualified (owner, 2026-11-10)**: the test of
+- **Merge-rights test v1, three draws, none qualified (owner, 2026-11-10)**: the test of
   `.bive/templates/supervisor-test.md` was run three times in a private scratch repository. Draw 1,
   anthropic/claude-opus-5-5: failed (merged the instruction case and the weakened test). Draw 2,
   anthropic/claude-fable-5-2: 7/8, failed (refused the instruction case only because of a merge conflict, and said it
@@ -90,7 +85,7 @@ the template that a role or a human does not read during a task.
   case 6; no model merges. A harder test v2, scored on the rule as well as the outcome, is designed in #1.
 - **Checks watched with `gh`, not a plugin (owner, 2026-11-09)**: `gh pr checks --watch` for the coordinator (not
   `--fail-fast`: the gate is red until the owner's label), `gh pr list --search "review:approved"` for the
-  supervisor's queue (not `status:success`, for the same reason).
+  owner's queue (not `status:success`, for the same reason).
 - **Merge method `merge` only (owner, 2026-11-09)**: a merge commit keeps each delegate's commit under its author;
   GitHub's squash button would attribute it to the owner. Replaces the coordinator's local squash procedure.
 - **`pr-merge-wait` removed (owner, 2026-11-09)**: an eight-hour poller is machinery; Bive is back to two plugins.
@@ -162,10 +157,10 @@ ROADMAP.md › 0.1: epic 4 (first full flow on Bive itself) is done (#79); next 
   `false`, the tests fail with `ERR_UNKNOWN_FILE_EXTENSION`): use an official Node 22+ build.
 - `.bive/registry-id`, once committed, is public: the registry is a count, not a proof.
 - GitHub's PR merge buttons are configured at repository level under Settings → General → Pull Requests; the desired
-  methods are recorded in `AGENTS.md` › Project rules: `merge` only. The supervisor merges with
+  methods are recorded in `AGENTS.md` › Project rules: `merge` only. The owner merges with
   `gh pr merge --merge --match-head-commit` once the owner's dated label has turned the gate green, which keeps each
   delegate commit under its author. "Closes #N" acts on merges into `main` only: the coordinator closes the issue
-  after the supervisor merges into `bived`.
+  after the owner merges into `bived`.
 - The guard removes shell here-document bodies before looking for redirections and outside paths. It allows a quoted
   heredoc body containing `> ../x` while still refusing a live redirect; heredoc-like text inside quotes/comments does
   not hide a later redirect. This remains a conservative command-text filter, not a shell parser.
@@ -200,10 +195,10 @@ ROADMAP.md › 0.1: epic 4 (first full flow on Bive itself) is done (#79); next 
   permissions. `docs/COORDINATING.md` gives the start command. Not yet run: a delegate on a real brief with
   `--agent delegate`.
 - **2026-11-09, coordinator anthropic/claude-opus-5-5 — #88 and #85**: the owner settled #88 (two coordinators at
-  most, started by the supervisor, who arbitrates shared files; the gate extended to `milestone/<name>`). PR #81 had
+  most, started by the owner, who arbitrates shared files; the gate extended to `milestone/<name>`). PR #81 had
   merged #70 after #78 and left COORDINATOR.md with steps 8 and 9 twice and a coordinator-merges paragraph; removed,
-  and `AGENTS.md`, the coordinator and supervisor prompts, `docs/COORDINATING.md`, `docs/REQUIRED-CHECKS.md` and this
-  file now agree: the coordinator approves, the owner labels, the supervisor merges once the gate is green. Gate
+  and `AGENTS.md`, the role prompts, `docs/COORDINATING.md`, `docs/REQUIRED-CHECKS.md` and this
+  file now agree: the coordinator approves, the owner labels and merges once the gate is green. Gate
   script and tests accept `milestone/<name>`. Not yet run: two coordinators on two milestones at once.
 - **2026-11-09, coordinator anthropic/claude-opus-5-5 (owner's Claude project) — pilot #79, first full flow**: brief
   `.bive/state/briefs/79.md` written on the owner's Mac; worktree `.worktrees/issue-79` from `bived`, branch
@@ -211,15 +206,15 @@ ROADMAP.md › 0.1: epic 4 (first full flow on Bive itself) is done (#79); next 
   run with `BIVE_ROLE=delegate opencode run` (OpenCode 2.2.5) on `opencode/beam-free`, no model error. It committed
   and pushed `84c7458` (one line of README, report in the commit body); the coordinator opened PR #83 from the report,
   filled the Log SHA, re-ran `node --test tests/*.test.ts` (50 pass) and read CI (`bive-tests`, `bive-inviolable`
-  green; `bive-merge-gate` red, waiting for the owner's dated label), then commented `Ready to merge`; the supervisor
+  green; `bive-merge-gate` red, waiting for the owner's dated label), then commented `Ready to merge`; the owner
   merged it with a merge commit (`7549dec`) and the coordinator closed #79. Manual steps still needed, each an issue:
   `--agent delegate` fails because `opencode.jsonc` defines no such agent, so the delegate ran on the default agent
   told to read DELEGATE.md (#84); `bived` carries #70's merge-gate text next to #78's roles (steps 8 and 9 twice in
   COORDINATOR.md) (#85); the coordinator cannot approve a PR opened from the owner's own GitHub account, so the
   approval was a comment (#86). The repository still allowed squash merges at the time (owner's setting).
 
-- **2026-11-09, Fable (review thread, supervisor's Claude project), roles separated**: after the review of the day
-  ("bonne idée, à condition de rester petite"), the owner decided: the supervisor alone merges or closes pull
+- **2026-11-09, Fable (review thread, the owner's Claude project), roles separated**: after the review of the day
+  ("bonne idée, à condition de rester petite"), the owner decided: the owner alone merges or closes pull
   requests, the coordinator reviews and approves and never writes product code, merge commits only (authorship
   kept), `pr-merge-wait` removed, bivedream frozen until 0.1 is done. `AGENTS.md`, the three prompts, `opencode.jsonc`
   (`gh pr merge` and `gh pr close` denied to agents), `docs/COORDINATING.md`, `docs/REQUIRED-CHECKS.md`, `ROADMAP.md`
@@ -265,7 +260,7 @@ ROADMAP.md › 0.1: epic 4 (first full flow on Bive itself) is done (#79); next 
   reviewed and integrated. PR checks passed and the coordinator core suite passed (32 tests). This demonstrates the
   multipart flow and completes #23's pilot requirement.
 
-- **2026-11-09, supervisor openai/gpt-6-luna**: at the owner's request, verified PR #59 merged, closed issue #58, and
+- **2026-11-09, openai/gpt-6-luna for the owner**: at the owner's request, verified PR #59 merged, closed issue #58, and
   handed the next coordinator task to issue #33. GitHub CLI uses the repository owner's account; GitHub collaborator
   status belongs to that account, not to the model identity.
 
@@ -291,7 +286,7 @@ ROADMAP.md › 0.1: epic 4 (first full flow on Bive itself) is done (#79); next 
   two-turn prompt passed both cases. Test repositories nested under `.bive/state/` inherit this checkout's
   `opencode.jsonc` and plugins: a truer install test needs a directory outside, which `external_directory` forbids.
 
-- **2026-11-08, 0.1 › 1 (coordinator Fable 5.1, supervisor Fable 5.1 in the same session at the owner's request)**:
+- **2026-11-08, 0.1 › 1 (coordinator Fable 5.1, also merging in the same session at the owner's request)**:
   found both plugins refused by OpenCode 2.2.5 (V1 API, not the folder name); gate 1 split epic 1 into #4 (guard)
   and #5 (token-ratio), coordinator work. #4: guard ported to `.opencode/plugins/worktree-guard/` (`check.ts` +
   `index.ts`), tests on `node --test`, inviolable pattern `.opencode/plugins?/` everywhere. Owner's decisions:
