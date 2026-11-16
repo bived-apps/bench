@@ -10,7 +10,7 @@ here is committed with the code it describes (an item started → `doing`, finis
 - Nothing enters the template that a role or a human does not read during a task. Anything else lives in its own
   repository.
 - Bive develops itself with its own flow: coordinator and delegates on the integration branch `bived`, pull requests
-  only; the supervisor (the owner) alone merges, with a merge commit, into `bived` and from `bived` into `main`.
+  only; the owner alone merges, with a merge commit, into `bived` and from `bived` into `main`.
 - **Versions tend to 1.0 and never reach it (owner, 2026-11-08)**: 1.0 is the dream, written down in *bivedream*
   below. Milestones count 0.1 … 0.9, then 0.91 … 0.99, then 0.991 …: when the last digit is 9, the next milestone
   appends a digit instead of carrying over. Each run of digits is an *order* with its own theme, and the number of
@@ -46,7 +46,7 @@ delegate, report, merge) with no manual step but the three gates.
     cover the guard cases, the coordinator commands pass, and the remaining live checks are recorded.
 4. **First full flow on Bive itself** (M) — done in #79 (PR #83, merge commit `7549dec`, log in #87). One
    `delegate` issue, one brief, one worktree `.worktrees/issue-79`, a delegate on `opencode/beam-free` that pushed
-   its branch with its report; the coordinator opened and reviewed PR #83, the supervisor merged it with a merge
+   its branch with its report; the coordinator opened and reviewed PR #83, the owner merged it with a merge
    commit. The steps that still needed a hand became issues: no `delegate` agent in `opencode.jsonc` (#84), #70's
    gate text next to #78's roles on `bived` (#85), no approval possible when coordinator and owner share one GitHub
    account (#86). Bive is project #1 of its own registry (`.bive/registry-id` committed).
@@ -59,7 +59,7 @@ delegate, report, merge) with no manual step but the three gates.
 ### bivedream — the limit (GitHub milestone `bivedream`)
 
 **Frozen (owner, 2026-11-09)** until 0.1's criterion holds: no bivedream issue is briefed before a first project
-issue has gone through the whole flow. *Authorship kept through merges* is settled: merge commits by the supervisor.
+issue has gone through the whole flow. *Authorship kept through merges* is settled: merge commits by the owner.
 
 The owner's request (2026-11-08): a detailed plan for Bive that is modular, optional and light, built on what exists
 and is compatible (OpenCode 2 and other tools), that fills Bive's gaps and defects, cares for the migration of the
@@ -153,7 +153,7 @@ per epic. Nothing of it is a Bive program: prompts, rules, and existing tools wi
 
 - The registry and the reports feed the briefs, the prompts' project additions and the model order: failure reasons
   classified per model, brief templates compared per model, rules proposed as pull requests to `.bive/prompts/project/`
-  (never the core prompts), accepted by the supervisor.
+  (never the core prompts), accepted by the owner.
 - Projects report back what they changed in their additions, as field reports (`AGENTS.md` › Field reports,
   `.bive/templates/field-report.md`, #35); the common part moves into the template.
 
@@ -168,7 +168,7 @@ per epic. Nothing of it is a Bive program: prompts, rules, and existing tools wi
 ### Waiting
 
 - **Integration safeguards (2026-11-09)**: follow-up batch #69–#75, approved at gate 1; #70's merge gate is kept as
-  a check on the supervisor's merge and extended to milestone branches (#85, #88); #74 (merge waiter) is superseded
+  a check on the owner's merge and extended to milestone branches (#85, #88); #74 (merge waiter) is superseded
   (`pr-merge-wait` removed) and waits for the owner to close it. #71 records the required CI
   checks in `docs/REQUIRED-CHECKS.md`; #72 conflict-aware
   planning around shared files; #73 fresh branches after squash merges; #74 a repository-configurable merge waiter;
