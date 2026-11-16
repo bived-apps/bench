@@ -2,7 +2,7 @@ name: bive-tests
 
 on:
   push:
-    branches: [main, bived]
+    branches: [main, bived, "milestone/**"]
   pull_request:
 
 permissions:

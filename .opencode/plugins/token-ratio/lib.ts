@@ -62,3 +62,39 @@ export function totals(log: string): { human: number, agent: number, ratio: numb
   }
   return { human, agent, ratio: human ? Math.round(agent / human) : null }
 }
+
+// The one line said when the registry report fails (#261): it names the registry, so an anonymous Cloudflare 403 is
+// not mistaken for a model provider's refusal; a 401/403 points to the Worker's side (`wrangler whoami`, then
+// `wrangler login`). Nothing is retried here: the counts wait for the next session end.
+export function registryFailureMessage(detail: string): string {
+  const auth = /\b(401|403)\b|authenticat|attention required/i.test(detail)
+  return `Bive registry report (token counter, not the model) not sent: ${detail}; retried at the next session end.` +
+    (auth ? " A 401/403 or a Cloudflare 'Attention Required' page comes from the registry Worker's side: check with" +
+      " `wrangler whoami`, reconnect with `wrangler login` (docs/REGISTRY.md › Troubleshooting)." : "")
+}
+
+// Issue #376: the registry counts per Bive role and canonical model, not per OpenCode agent and route.
+const ROLES = new Set(["coordinator", "delegate", "advisor"])
+
+// The session's Bive role, from the signals the guard reads (docs/ROLE-START.md): its agent when that is a Bive one,
+// else BIVE_ROLE, else the role file `.bive/state/role` of its directory, else a `.worktrees/issue-<n>` directory (a
+// delegate). Without any, the OpenCode agent name stays (the registry shows it as "other"), or "unknown".
+export function biveRole(agent: string, envRole: string | undefined, roleFile: string | undefined,
+                         directory: string): string {
+  for (const v of [agent, envRole, roleFile?.trim()]) if (v && ROLES.has(v)) return v
+  if (/[\\/]\.worktrees[\\/]issue-\d+$/.test(path.resolve(directory))) return "delegate"
+  return agent || "unknown"
+}
+
+// The canonical model of a route, through the local alias file `.bive/state/models.local.json` read backwards
+// ({"aliases": {canonical: route}}, docs/PROVIDERS.md). An unreadable file or an unknown route gives the route back.
+export function canonicalModel(route: string, aliasesText: string | undefined): string {
+  if (!route || !aliasesText) return route
+  try {
+    const aliases = (JSON.parse(aliasesText) as { aliases?: Record<string, unknown> }).aliases ?? {}
+    for (const [canonical, alias] of Object.entries(aliases)) if (alias === route) return canonical
+  } catch {
+    return route   // a corrupt alias file is the owner's to fix; the route is still a true name
+  }
+  return route
+}

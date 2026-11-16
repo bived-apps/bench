@@ -30,27 +30,22 @@ test("passes only after an authorized PR has green checks and fresh metadata", a
   assert.equal(reads, 2)
 })
 
-test("waits for pending checks, then accepts their green result", async () => {
-  let reads = 0
-  let time = now
-  const result = await run({
-    now: () => time,
-    sleep: async (ms: number) => { time += ms },
-    readChecks: async () => reads++ === 0 ? [green[0], { ...green[1], bucket: "pending" }] : green,
-  })
-  assert.equal(result.ok, true)
-  assert.equal(reads, 2)
+test("fails immediately when a check is pending and never waits", async () => {
+  let slept = 0
+  await assert.rejects(run({
+    sleep: async () => { slept++ },
+    readChecks: async () => [green[0], { ...green[1], bucket: "pending" }],
+  }), /required CI checks have not finished yet; the gate runs again when they complete/)
+  assert.equal(slept, 0)
 })
 
-test("waits for absent check contexts and fails after the bounded deadline", async () => {
-  let time = 0
+test("fails immediately when required checks are missing", async () => {
+  let slept = 0
   await assert.rejects(run({
-    now: () => time,
-    maxWaitMs: 20,
-    pollIntervalMs: 10,
-    sleep: async (ms: number) => { time += ms },
+    sleep: async () => { slept++ },
     readChecks: async () => [green[0]],
-  }), /timed out waiting/)
+  }), /required CI checks have not finished yet; the gate runs again when they complete/)
+  assert.equal(slept, 0)
 })
 
 test("rejects missing authorization before querying checks", async () => {

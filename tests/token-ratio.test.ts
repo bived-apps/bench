@@ -1,7 +1,8 @@
 // node --test tests/*.test.ts — token-ratio's pure helpers (docs/TOKENS.md); no OpenCode needed.
 import { describe, test } from "node:test"
 import assert from "node:assert/strict"
-import { ownSession, totals, twoDigits } from "../.opencode/plugins/token-ratio/lib.ts"
+import { readFileSync } from "node:fs"
+import { ownSession, registryFailureMessage, totals, twoDigits } from "../.opencode/plugins/token-ratio/lib.ts"
 
 describe("totals", () => {
   test("sums human and agent tokens and rounds the ratio", () => {
@@ -50,5 +51,53 @@ describe("twoDigits", () => {
     assert.equal(twoDigits(100), 100)
     assert.equal(twoDigits(99), 99)
     assert.equal(twoDigits(0), 0)
+  })
+})
+
+describe("registryFailureMessage (#261)", () => {
+  test("names the registry report, not the model, and says when it retries", () => {
+    const m = registryFailureMessage("HTTP 500")
+    assert.match(m, /^Bive registry report \(token counter, not the model\) not sent: HTTP 500;/)
+    assert.match(m, /retried at the next session end/)
+    assert.doesNotMatch(m, /wrangler/)
+  })
+  test("points a 401, a 403 or a Cloudflare page to wrangler", () => {
+    for (const d of ["HTTP 403", "HTTP 401", "403 Attention Required! | Cloudflare", "Failed to authenticate"])
+      assert.match(registryFailureMessage(d), /wrangler whoami.*wrangler login/, d)
+  })
+})
+
+test("the plugin warns once with that message and the docs carry the troubleshooting line", () => {
+  const src = readFileSync(new URL("../.opencode/plugins/token-ratio/index.ts", import.meta.url), "utf8")
+  assert.match(src, /if \(!warned\) console\.error\(registryFailureMessage\(/)
+  const doc = readFileSync(new URL("../docs/REGISTRY.md", import.meta.url), "utf8")
+  assert.match(doc, /\*\*Troubleshooting\*\*: a `403 Attention Required \| Cloudflare`/)
+  assert.match(doc, /Do not switch models for it/)
+})
+
+// #376: the registry counts per Bive role and canonical model.
+import { biveRole, canonicalModel } from "../.opencode/plugins/token-ratio/lib.ts"
+describe("biveRole", () => {
+  test("a Bive agent wins, then BIVE_ROLE, then the role file, then a delegate's worktree", () => {
+    assert.equal(biveRole("coordinator", undefined, undefined, "/w/bive"), "coordinator")
+    assert.equal(biveRole("build", "delegate", undefined, "/w/bive"), "delegate")
+    assert.equal(biveRole("build", undefined, "coordinator\n", "/w/bive"), "coordinator")
+    assert.equal(biveRole("build", undefined, undefined, "/w/bive/.worktrees/issue-12"), "delegate")
+  })
+  test("without a signal the OpenCode agent stays, or unknown", () => {
+    assert.equal(biveRole("build", undefined, undefined, "/w/bive"), "build")
+    assert.equal(biveRole("", undefined, undefined, "/w/bive"), "unknown")
+    assert.equal(biveRole("build", "owner", "nonsense", "/w/bive"), "build")
+  })
+})
+describe("canonicalModel", () => {
+  const aliases = JSON.stringify({ aliases: { "anthropic/claude-opus-5-5": "claude-agent/opus" } })
+  test("a known route gives its canonical name", () => {
+    assert.equal(canonicalModel("claude-agent/opus", aliases), "anthropic/claude-opus-5-5")
+  })
+  test("an unknown route, a missing or a corrupt file give the route back", () => {
+    assert.equal(canonicalModel("opencode-go/beam-free", aliases), "opencode-go/beam-free")
+    assert.equal(canonicalModel("claude-agent/opus", undefined), "claude-agent/opus")
+    assert.equal(canonicalModel("claude-agent/opus", "{not json"), "claude-agent/opus")
   })
 })

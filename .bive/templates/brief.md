@@ -8,6 +8,9 @@ Branch `issue/<N>-<slug>` from `<integration branch>` · worktree `.worktrees/is
 
 **Steps**: <!-- exactly what to write: functions, files, signatures -->
 
+**Shared files**: <!-- ownership and dependency constraints for known shared files (issue #72): which files this issue
+  owns exclusively, which it depends on another issue's merge for, or "none". -->
+
 **Done when**: <!-- observable criteria -->
 
 **Checks**:
@@ -39,6 +42,9 @@ Branch `issue/<N>-<slug>` from `<integration branch>` · worktree `.worktrees/is
 ```bash
 # this part's lint and tests
 ```
+
+Scratch files go under `.bive/state/` in your worktree, never `/tmp` or `$TMPDIR`; edit files with your edit tool
+(the guard refuses most pipes and all backticks in shell commands).
 
 Follow the pull request timing above. After your assigned part, push the issue branch and return the filled
 `.bive/templates/report.md` to the coordinator in your final response. The coordinator creates or updates the PR;
