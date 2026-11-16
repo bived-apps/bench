@@ -1,4 +1,8 @@
-# Bive 0.0
+<img src="https://raw.githubusercontent.com/bived-apps/bive/main/docs/design/icon/icon-d.svg" width="96" alt="Bive's mark: a capital B drawn by small delegates">
+
+# Bench: which models behave well in which role, measured.
+
+Start here: [Results](RESULTS.md) · Read next: [Install](#install) · Part of [Bive](https://github.com/bived-apps/bive)
 
 A repository template for building software with LLM agents in three roles, on OpenCode 2:
 
@@ -71,6 +75,13 @@ and integration branches. This makes a red base visible promptly; adapt the work
 | `registry/`, `help/` | The registry's Worker and page, the browser help: leaving for their own repository (ROADMAP 0.1 › 5) |
 
 ## Developing Bive
+
+| | Role | In this project |
+| --- | --- | --- |
+| <img src="https://raw.githubusercontent.com/bived-apps/bive/main/docs/design/role-owner.svg" width="24" alt="Owner glyph: a key in a gold ring"> | **owner** | decides gates and merges |
+| <img src="https://raw.githubusercontent.com/bived-apps/bive/main/docs/design/role-advisor.svg" width="24" alt="Advisor glyph: a magnifier"> | **advisor** | answers read-only, then stops |
+| <img src="https://raw.githubusercontent.com/bived-apps/bive/main/docs/design/role-coordinator.svg" width="24" alt="Coordinator glyph: a clipboard"> | **coordinator** | splits, briefs, reviews; never merges |
+| <img src="https://raw.githubusercontent.com/bived-apps/bive/main/docs/design/role-delegate.svg" width="24" alt="Delegate glyph: a laptop"> | **delegate** | one issue, one worktree, then stops |
 
 Agents work on the branch **`bived`** by pull request; `main` is the template people copy and only the owner merges
 into it. Start the coordinator with the prompt in `HANDOFF.md › Running it`. MIT licence.
