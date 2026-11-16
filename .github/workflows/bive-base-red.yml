@@ -1,0 +1,36 @@
+name: bive-base-red
+
+on:
+  workflow_run:
+    workflows: [bive-tests]
+    types: [completed]
+
+permissions:
+  issues: write
+
+jobs:
+  open-base-red-issue:
+    if: github.event.workflow_run.event == 'push' && github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Open or comment on a Base red issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+          title="Base red: ${HEAD_BRANCH} at ${HEAD_SHA}"
+          run_url="https://github.com/${REPO}/actions/runs/${RUN_ID}"
+          body=$(printf 'The full suite failed on a push to `%s` at `%s`.\n\nRun: %s\n\nThis issue stays open while the base remains red; it is closed (or commented on) once a green run lands.\n' "${HEAD_BRANCH}" "${HEAD_SHA}" "${run_url}")
+          existing=$(gh issue list --repo "${REPO}" --state open --search "in:title \"Base red: ${HEAD_BRANCH}\"" --json number --jq '.[0].number // empty')
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "${REPO}" --body "$(printf 'Still red on `%s` at `%s`.\n\nRun: %s\n' "${HEAD_BRANCH}" "${HEAD_SHA}" "${run_url}")"
+            echo "Commented on existing issue #${existing}."
+          else
+            gh issue create --repo "${REPO}" --title "$title" --body "$body" --label "bug"
+            echo "Opened new Base red issue."
+          fi

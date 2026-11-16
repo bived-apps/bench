@@ -1,9 +1,13 @@
 # Registry
 
-Bive keeps a public, live, anonymous registry of the projects built with it: **[the registry](https://bive-registry.jcherfils.workers.dev/)**.
+Bive keeps a public, live, anonymous registry of the projects built with it: **[the registry](https://bived-apps.github.io/registry/)** (data from the Worker at `https://bive-registry.bive.workers.dev/v1/stats`).
 It is **off by default** (opt-in): nothing leaves the machine until the owner turns it on. Joining is the one thing
 Bive asks in return; the licence (MIT) does not require it.
 
+- **At an update** (`docs/UPDATE.md`) Bive's `.bive/registry-id` is never copied: it is Bive's own, and a copy would
+  make your project report under it. Keep your own file, or none.
+- **At install** the coordinator asks once (skill `bive-registry-optin`, guide for humans: `docs/FOR-HUMANS.md`); the id
+  is created only on a yes.
 - **Turn it on**: `export BIVE_REGISTRY=on` on the agents' machine, once; the first session then draws the random id
   into `.bive/registry-id` and says so. Commit that file: from then on the project reports in every clone and
   worktree, without the variable. **Turn it off**: `export BIVE_REGISTRY=off` (wins over the file), or delete the
@@ -11,7 +15,8 @@ Bive asks in return; the licence (MIT) does not require it.
 
 - **What is sent**, when a root session goes idle: the human tokens, agent tokens and violations (writes the guard
   refused: outside the worktree, or a delegate on an inviolable file) since the last report, the agent tokens per
-  OpenCode agent name and provider/model (the llm variable, with input tokens and summed response time, for the
+  Bive role (coordinator, delegate, advisor; else the OpenCode agent name) and canonical provider/model (the
+  route of `.bive/state/models.local.json` read backwards; #376) (the llm variable, with input tokens and summed response time, for the
   speed columns: seconds per reply, output tokens per second, tokens in per token out), the
   project's size in tracked text lines rounded to two significant figures (48 213 → 48 000), and the random id in
   `.bive/registry-id`. That id is the app's unique identifier: commit it so every clone
@@ -28,5 +33,10 @@ Bive asks in return; the licence (MIT) does not require it.
   report cap or the daily new-project cap. `GET /v1/stats` returns the public totals and per-project aggregates;
   `GET /` returns the public page.
 
-- **Run a registry**: `registry/` holds the Cloudflare Worker (`worker.js`, D1 `schema.sql`, `wrangler.toml`) and
-  its page; the deploy steps are at the top of `wrangler.toml`.
+- **Run a registry**: the repository [bived-apps/registry](https://github.com/bived-apps/registry) holds the
+  Cloudflare Worker (`worker.js`, D1 `schema.sql`, `wrangler.toml`), its page and the browser help; the deploy steps
+  are at the top of `wrangler.toml`.
+- **Troubleshooting**: a `403 Attention Required | Cloudflare` or an authentication error while deploying or reporting
+  comes from the registry Worker's side, not from a model provider: check with `wrangler whoami`, reconnect with
+  `wrangler login`, then retry. Do not switch models for it. The token counter says once per session that the
+  **registry report** failed, with the status, and only retries at the next session end (issue #261).

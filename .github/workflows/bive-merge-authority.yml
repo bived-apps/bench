@@ -1,0 +1,22 @@
+name: bive-merge-authority
+
+on:
+  push:
+    branches: [bived, "milestone/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  merge-authority:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check that the pushed merge commit keeps authorship separate
+        run: node .github/scripts/check-merge-authority.mjs

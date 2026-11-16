@@ -1,0 +1,89 @@
+name: bive-generated-docs
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+concurrency:
+  group: bive-generated-docs-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  regenerate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Regenerate declared reference docs
+        id: regenerate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ ! -f .bive/generated-docs.json ]; then
+            echo "No .bive/generated-docs.json; nothing to do."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          command=$(node -e "const d=require('./.bive/generated-docs.json'); process.stdout.write(d.command||'')")
+          paths=$(node -e "const d=require('./.bive/generated-docs.json'); process.stdout.write((d.paths||[]).join('\\n'))")
+          timeout=$(node -e "const d=require('./.bive/generated-docs.json'); process.stdout.write(String(d.timeout_minutes||5))")
+          if [ -z "$command" ] || [ -z "$paths" ]; then
+            echo "::error::generated-docs.json must declare 'command' and 'paths'"
+            exit 1
+          fi
+          echo "Running generator: $command (timeout ${timeout}m)"
+          timeout "${timeout}m" bash -c "$command"
+          # Idempotency check: run again, must produce no further diff.
+          before=$(git diff --stat)
+          timeout "${timeout}m" bash -c "$command"
+          after=$(git diff --stat)
+          if [ "$before" != "$after" ]; then
+            echo "::error::generator is not idempotent: second run changed more files"
+            exit 1
+          fi
+          # Only declared paths may change.
+          changed=$(git diff --name-only)
+          for f in $changed; do
+            if ! printf '%s\n' "$paths" | grep -qxF "$f"; then
+              echo "::error::generator changed undeclared path: $f"
+              exit 1
+            fi
+          done
+          if [ -n "$changed" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "changed_files<<EOF" >> "$GITHUB_OUTPUT"
+            echo "$changed" >> "$GITHUB_OUTPUT"
+            echo "EOF" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Commit regenerated docs to the PR branch
+        if: steps.regenerate.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add $(cat <<'PATHS'
+          ${{ steps.regenerate.outputs.changed_files }}
+          PATHS
+          )
+          git commit -m "chore: regenerate reference docs"
+          git push
+      - name: Report stale generated docs (forked PR)
+        if: steps.regenerate.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          set -euo pipefail
+          echo "::warning::Generated reference docs are stale. Run the generator locally and push."
+          gh pr comment "${{ github.event.pull_request.number }}" --body "Generated reference docs are stale on this PR. Please run the declared generator locally and push the updated files."
+          exit 1

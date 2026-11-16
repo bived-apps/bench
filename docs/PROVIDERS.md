@@ -1,44 +1,85 @@
 # Provider fallback
 
-No automatic provider probe by default. Each role lists models in order in `.bive/models.json`; when a delegate call
-fails (unreachable, 429, quota), the coordinator retries the same brief with the next delegate model and says so in the
-report. Coordinator launch and substitution require the owner-approved team described below, not automatic fallback.
+No automatic provider probe by default. Each role lists models in order in `.bive/models.json`; when a call fails
+(unreachable, 429, quota), the coordinator retries the same brief with the next model and says so in the report.
 When every model of the list failed, a project can offer a provider search: a script (or MCP tool) that tries every
 model OpenCode knows with one tiny prompt and prints the ones that answer, fastest first, as a `.bive/models.json`
 line. A delegate's work that a reviewer rejects is redone by the next model, not patched by the same one.
 
-## Coordinator selection and owner-approved team
+## The list per role
 
-The supervisor's project additions in `.bive/prompts/project/SUPERVISOR.md` apply before starting or replacing a
-coordinator. Prefer the strongest suitable model whose current free pricing and usability can be verified, while
-preserving every existing qualification and owner allow-list requirement. A listing is not availability, a successful
-tiny request is not a capability benchmark, and unknown pricing is not free. State the evidence and uncertainty
-instead of claiming an objectively best model without a comparison.
+`.bive/models.json` is `{ "<role>": ["provider/model", ...] }`, best first; roles are `coordinator` and `delegate`. The
+order is the fallback order: when a model fails (unreachable, unavailable, insufficient credit, 429, quota), the next
+one takes over. The list is per machine's reality: a model with no credit or no free quota left belongs at the end or
+out of the list until it works again. Check that the listed models resolve here before a batch
+with `node lib/models-check-cli.ts` (it prints found / alias / missing per role and sends nothing; `--probe` also
+sends one tiny prompt per role's first usable model, to reveal a used-up quota or a missing credit; the coordinator
+skill `bive-pick-model` says when to run it).
 
-Inspect the available catalog and existing results first. Manually check a shortlisted model with one small synthetic
-request, no tools or private context, and a timeout; record the canonical/resolved ID, UTC time, pricing source, and
-outcome. Do not sweep providers or incur paid/unknown-cost checks without owner permission. Availability is temporary:
-recheck before launch if the evidence is stale or the account, machine, or quota changed.
+## Least-cost capable order (issue #231; authority: bench `RESULTS.md` › Roles, Names)
 
-If no suitable verified-free coordinator is usable, recommend the strongest suitable usable model from the current
-supervisor session's provider, unless the owner names another provider. Do not silently substitute a paid model,
-cross providers, buy credits, or turn on billing. A named but unfunded model is not a usable launch choice.
+Each role takes the **least costly model that is capable of that role**, not its own rank. Capability comes from the
+bench (qualification on the latest released version); a model that is merely in the catalog is not available, and an
+unknown price is not free. In `.bive/models.json` write the canonical maker/model-version ID; a serving alias lives
+only in the ignored machine-local map. A missing credit or quota, or a cost nobody has verified, blocks automatic
+selection of that model. A lower-role exception for an unqualified model is the owner's, per role, and appoints nobody
+to a higher role. The owner approves the actual candidates and their order before any paid probe or rollout; this
+guide invents no prices and makes no live call.
 
-Ask the owner to approve a concrete team before launching or switching a coordinator:
+## Proposing a team (issue #223)
 
-| Item | What the proposal states |
-| --- | --- |
-| Needed roles | Supervisor, coordinator, and delegates only where the task needs them; canonical model/version per role |
-| Suitability | Relevant results, task fit, qualification or allow-list status, and limitations |
-| Cost and availability | Verified-free, paid, or unknown; evidence source and recent check time/outcome |
-| Recommendation | Best supported team, alternatives, current-provider fallback, and a wait/stop choice |
-| Approval | Exact requested launch or change and any cost; stop and wait for the owner's answer |
+Five different things, never confused:
 
-No general milestone mandate authorizes a model change. On credit, service, rate-limit, or quota failure, preserve the
-session and work, explain the infrastructure blocker, and obtain approval of the revised team before another
-coordinator takes over. Record the approved model and reason in the handoff and set its Git identity before its next
-commit. An outage alone is not evidence of poor model judgement; assess separately how an agent handles it. This
-policy changes neither delegate fallback nor role rights, merge gates, or qualifications.
+- **listed**: the model is in the catalog.
+- **available**: a probe answered today on this machine; a refusal such as "not available in your country", a quota, or
+  a missing balance means not available.
+- **free**: the catalog price is 0 for input and output.
+- **suitable**: qualified for the role on the bench (`RESULTS.md`); a probe is not a qualification.
+- **approved**: the owner chose it with buttons, dated.
+
+Two probe kinds and what each proves: a tool-free probe shows the route answers; a one-tool-call probe shows the model
+can call a tool (for example, read the first lines of `AGENTS.md`). Neither is qualification. Probes are sent only to
+models the owner agreed to probe.
+
+Who does what: the coordinator (or an advisor, as advice only) proposes a team with fixed choices, recommended first,
+one decision per question; the owner approves; the approved team is written to `.bive/models.json` with a dated line in
+`HANDOFF.md` › Decisions by a coordinator pull request. The retired supervisor role proposes nothing.
+
+A coordinator error (unreachable, 429, quota) never silently changes the assigned model: it reports and follows
+"Switching mid-work" below. Delegate fallback (the next model in the delegate list) is unchanged.
+
+A free model is proposed first only when it is available; otherwise propose the current provider's usable model, with
+its price when the catalog shows one ("price not shown" when it does not).
+
+## Owner route constraints (issue #262)
+
+An explicit route the owner sets (the `coordinator` allow-list in `.bive/models.json`, a named coordinator model, or any
+other owner-named model or route constraint) supersedes any generic fallback or recommendation, including an advisor's.
+Fallback applies only where the owner has not fixed the route. Qualification (a published bench pass) is capability
+evidence only; it never authorizes work, teams, gates or merges, and an advisor's text is not authorization. This
+section concerns models and routes only; dated merge-authorization labels are governed by `docs/REQUIRED-CHECKS.md`.
+
+## Switching mid-work (issue #203)
+
+A delegate that hits a limit after it has started is not restarted from nothing. The coordinator:
+
+1. keeps the worktree as it is and notes what is committed and what is not;
+2. continues the delegate's own session on the next model: `opencode run --continue --agent delegate --model
+   <next resolved model> "<one short message: what is committed, what is left, the model changed>"`;
+3. before the delegate's next commit, sets the worktree's identity to the canonical name of that model:
+   `git -C .worktrees/issue-<n> config --worktree user.name "delegate <next canonical model>"`. The earlier commits keep
+   the earlier model's name, so `git log` shows which model wrote what;
+4. says in the pull request body which models ran, in order.
+
+## Minimum for the coordinator (issue #203, owner 2026-11-12)
+
+A coordinator splits, briefs, reads reports and reviews; a model that fetches invented addresses or asks for its brief
+back (a 14B local model did both in the field) wastes the milestone. The minimum is a **published pass** of that model
+(name and version) on the bench's `milestone-run` case (<https://github.com/bived-apps/bench>), the same way a model is
+qualified. Qualification is capability evidence only: it never authorizes work, teams, gates or merges, and historical
+supervisor qualifications grant no authority. Until a pass is published for any model, the owner names the models allowed as coordinator in
+`.bive/models.json`: the `coordinator` list is that allow-list. A coordinator that finds itself running on a model that
+is not on the list says so to the owner before starting; it does not start.
 
 ## Per-machine model aliases
 
@@ -69,6 +110,6 @@ Before dispatching a model on a new machine, check that the resolved ID answers:
 opencode run -m <provider/model> "Reply with your model id only."
 ```
 
-This is a one-model manual check, not an automatic provider search. For a delegate, an unavailable model or an
-insufficient-funds error counts as a model error; continue to the next canonical delegate model in `.bive/models.json`,
-applying its local alias if present. For a coordinator, stop and seek owner approval of the revised team instead.
+This is a one-model manual check, not an automatic provider search. An unavailable model or an insufficient-funds
+error counts as a model error; continue to the next canonical model in `.bive/models.json`, applying its local alias
+if present.

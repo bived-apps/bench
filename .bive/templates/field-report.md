@@ -4,7 +4,7 @@
 "a project" (or its kind, "a Python / ImGui project"), "machine A", "the owner". Model ids stay canonical. -->
 
 **Bive version**: <!-- tag or bived commit the project installed -->
-**Roles and models**: <!-- coordinator provider/model; delegates provider/model, …; supervisor -->
+**Roles and models**: <!-- coordinator provider/model; delegates provider/model; optional consulted advisor provider/model; human owner -->
 **Machines**: <!-- machine A: OS, OpenCode version; machine B: … -->
 **When**: <!-- end of milestone (gate 3) | a Bive rule, prompt, template or plugin had to be worked around -->
 
